@@ -73,25 +73,47 @@ bản vạch nét cũng thiếu đúng phần đó.
 
 ### Phim hai phần, dải dưới chiếu mã nguồn — `quay_phim_lap_trinh.py`
 
-Phim kể lại việc bức tranh được sinh ra bằng lập trình, chia hai phần:
+Phim kể lại việc bức tranh được sinh ra bằng lập trình, chia hai phần và
+khép lại bằng cảnh pháo hoa:
 
 1. **Định bản phác hoạ** — khung tranh trống, các ô bố cục hiện ra bằng nét
    đứt, rồi bản vẽ bằng mã được dựng dần từng hình một, đúng thứ tự mà
    chương trình gọi lệnh vẽ. Làm được điều này nhờ lớp `TranhGhi` kế thừa
    `Tranh`: mọi lệnh vẽ được ghi vào nhật ký rồi phát lại dần.
-2. **Dây chuyền dựng bản cuối** — ảnh chụp bức tường đi qua các bước tìm
-   góc, nắn phẳng, tách hai màu, dò biên, dựng vector.
+2. **Dây chuyền dựng bản cuối** — mặt nạ hai màu hiện lên, các đường biên
+   được dò lần lượt, rồi hình vector được tô từ lớn đến nhỏ.
+3. **Pháo hoa** — bức tranh hiện giữa trời đêm, pháo hoa nổ hai bên.
 
-Dải dưới khung hình không ghi tên bước mà chiếu chính những dòng mã làm nên
-cảnh đang xem, gõ ra từng chữ, có tô màu từ khoá - chuỗi - con số như trong
-trình soạn thảo.
+Dải dưới khung hình không ghi tên bước mà chiếu **mã nguồn bằng tiếng Anh**
+làm nên cảnh đang xem, gõ ra từng chữ, có tô màu từ khoá - chuỗi - con số.
+Đoạn mã trên phim được viết gọn lại cho dễ đọc, còn mã thật nằm trong các
+tệp cùng thư mục.
 
 ```bash
 python3 quay_phim_lap_trinh.py anh_chup.jpg -o qua_trinh_lap_trinh.mp4
 python3 quay_phim_lap_trinh.py anh_chup.jpg -o phim.gif --nhanh 1.6
 ```
 
-Bản dựng sẵn: [`qua_trinh_lap_trinh.mp4`](qua_trinh_lap_trinh.mp4) — 31,9 giây.
+Bản dựng sẵn: [`qua_trinh_lap_trinh.mp4`](qua_trinh_lap_trinh.mp4) — 32,2 giây.
+
+### Pháo hoa mô phỏng bằng hệ hạt — `phao_hoa.py`
+
+Cảnh cuối của phim không phải ảnh động dựng sẵn mà là một mô phỏng vật lý
+nhỏ, chạy được riêng:
+
+```bash
+python3 phao_hoa.py -o phao_hoa.mp4 --giay 8
+```
+
+- Mỗi quả pháo là một hạt bay lên, chịu **trọng lực** và **lực cản**; khi
+  vận tốc thẳng đứng gần bằng không, tức tới đỉnh, thì nổ.
+- Vụ nổ sinh 200-340 tia, hướng rải đều quanh vòng tròn, tốc độ phân tán
+  quanh một trị số; khoảng một phần ba số quả nổ thành vòng đều nhau.
+- Mỗi tia có tuổi thọ riêng, độ sáng giảm theo luỹ thừa của phần đời còn
+  lại và nhấp nháy theo một hàm sin lệch pha ngẫu nhiên.
+- **Vệt sáng** có được nhờ giữ lại khung hình trước rồi nhân với 0,855 —
+  ánh sáng cũ mờ dần thay vì biến mất. Sau cùng cộng thêm một bản làm mờ
+  để tạo quầng hào quang, và nén sáng bằng hàm `1 - exp(-x)` cho khỏi cháy.
 
 ### Quay riêng dây chuyền vạch nét — `quay_qua_trinh.py`
 

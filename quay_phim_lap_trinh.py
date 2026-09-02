@@ -24,6 +24,7 @@ import re
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+import phao_hoa as ph
 import vach_net_tu_anh as vn
 import ve_tranh_co_dong as lo
 
@@ -197,52 +198,66 @@ def _khung_bo_cuc(rong, cao, so_o: int, mo: float = 1.0) -> Image.Image:
 
 
 MA_PHAC_HOA = [
-    "# phác hoạ: dựng khung tranh rồi định vị các mảng",
-    "RONG, CAO = 1600, 1560",
-    "DO, VANG = BANG_MAU[\"tuong\"]",
-    "t = Tranh(rong_ra=2000, ty_le=3)",
-    "O_BAN_DO = (800, 156, 1248, 1240)",
-    "ve_ngoi_sao(t, tam=(1420, 288), ban_kinh=124)",
-    "ve_dong_chu(t, \"2-9-1945\", o=(56, 1306, 792, 1472))",
+    "# blueprint: set up the frame, then place each block",
+    "W, H = 1600, 1560",
+    "RED, YELLOW = PALETTE[\"wall\"]",
+    "canvas = Canvas(width=2000, supersample=3)",
+    "MAP_BOX = (800, 156, 1248, 1240)",
+    "STAR = dict(center=(1420, 288), radius=124)",
+    "HEADLINE_BOX = (56, 1306, 792, 1472)",
 ]
 
 MA_VE_HINH = [
-    "# mỗi mảng, mỗi nét đều là một lệnh vẽ",
-    "ve_ban_do(t)      # bờ biển từ toạ độ kinh - vĩ độ",
-    "ve_ten_dao(t)",
-    "ve_ngoi_sao(t)",
-    "t.dat_khung(1.08, 0.0, -96.0)",
-    "ve_chan_dung(t)",
-    "t.to(THAN, muot=2)",
-    "t.to(DAU, muot=3)",
-    "t.net(CHAN_TOC, 9, dang=\"nhon\")",
-    "for lon, dam in _lon_toc(rng):",
-    "    t.net(lon, 7.5 * dam, dang=\"vuot\")",
-    "for soi, dam in _soi_rau(rng):",
-    "    t.net(soi, 5 * dam, dang=\"vuot\")",
-    "ve_micro(t)",
-    "ve_dong_chu(t, chu=\"2-9-1945\")",
-    "t.luu(\"tranh_co_dong_2_9_1945.svg\")",
+    "# every shape and every stroke is one drawing call",
+    "draw_map(canvas)          # coastline from real lon/lat",
+    "draw_island_labels(canvas)",
+    "draw_star(canvas, **STAR)",
+    "canvas.set_transform(scale=1.08, dy=-96)",
+    "draw_portrait(canvas)",
+    "canvas.fill(BODY, smooth=2)",
+    "canvas.fill(HEAD, smooth=3)",
+    "canvas.stroke(HAIRLINE, 9, brush=\"tapered\")",
+    "for lock, weight in hair_locks(rng):",
+    "    canvas.stroke(lock, 7.5 * weight, brush=\"fade\")",
+    "for hair, weight in beard_hairs(rng):",
+    "    canvas.stroke(hair, 5 * weight, brush=\"fade\")",
+    "draw_microphone(canvas)",
+    "draw_headline(canvas, \"2-9-1945\", box=HEADLINE_BOX)",
+    "canvas.save(\"poster_2_9_1945.svg\")",
 ]
 
 MA_DAY_CHUYEN = [
-    "# dây chuyền: từ ảnh chụp bức tường ra bản vector",
-    "anh = Image.open(\"anh_chup.jpg\").convert(\"RGB\")",
-    "goc = tim_khung(np.asarray(anh))",
-    "goc = lui_khung(goc, 0.014)",
-    "phang = nan_phang(anh, goc, 1900, 1814)",
-    "r, g, b = np.asarray(phang).T",
-    "do_vang = np.minimum(r, g) - b",
-    "m = apply_hysteresis_threshold(do_vang, 8, 40)",
-    "m &= (r > 90) & (g > 105)",
-    "m = remove_small_objects(m, 12)",
-    "for p in measure.find_contours(m, 0.5):",
-    "    q = approximate_polygon(p, tolerance=0.9)",
-    "    hinh.append((dien_tich(q), mau_ben_trong(q, m), q))",
-    "hinh.sort(key=lambda h: -h[0])",
-    "for dt, mau, q in hinh:",
-    "    t.to(q, VANG if mau == \"vang\" else DO)",
-    "t.luu(\"tranh_tuong_2_9_1945.svg\")",
+    "# pipeline: turn the mural photo into vector artwork",
+    "warped = deskew(photo, corners, 1900, 1814)",
+    "r, g, b = np.asarray(warped).T",
+    "yellowness = np.minimum(r, g) - b",
+    "mask = hysteresis_threshold(yellowness, low=8, high=40)",
+    "mask &= (r > 90) & (g > 105)",
+    "mask = remove_small_objects(mask, 12)",
+    "for path in find_contours(mask, level=0.5):",
+    "    poly = approximate_polygon(path, tolerance=0.9)",
+    "    shapes.append((area(poly), color_inside(poly, mask), poly))",
+    "shapes.sort(key=lambda s: -s[0])",
+    "for _, color, poly in shapes:",
+    "    canvas.fill(poly, YELLOW if color == \"yellow\" else RED)",
+    "canvas.save(\"mural_2_9_1945.svg\")",
+]
+
+MA_PHAO_HOA = [
+    "# finale: a small fireworks simulation",
+    "GRAVITY, DRAG, FADE = 0.075, 0.986, 0.855",
+    "def burst(x, y, n=280):",
+    "    for _ in range(n):",
+    "        a = random.uniform(0, TAU)",
+    "        v = random.gauss(4.8, 1.1)",
+    "        yield Spark(x, y, cos(a) * v, sin(a) * v)",
+    "sky *= FADE               # old light lingers as trails",
+    "for s in sparks:",
+    "    s.vx *= DRAG",
+    "    s.vy = s.vy * DRAG + GRAVITY",
+    "    s.x += s.vx; s.y += s.vy",
+    "    sky[int(s.y), int(s.x)] += s.color * s.glow",
+    "# happy national day",
 ]
 
 
@@ -293,95 +308,21 @@ def phan_phac_hoa(fps, lap):
         yield khung(cuoi, "ve_tranh_co_dong.py", MA_VE_HINH, sum(len(d) for d in MA_VE_HINH))
 
 
-def phan_day_chuyen(duong_anh, fps, lap):
-    """Phần 2: ảnh chụp đi qua dây chuyền để ra bản vector cuối cùng."""
-    ma = MA_DAY_CHUYEN
-    tong_ma = sum(len(d) for d in ma)
-
-    def cat_ma(den_dong, ti):
-        """Số ký tự gõ tới, tính theo dòng mã ứng với cảnh đang chiếu."""
-        truoc = sum(len(d) for d in ma[:den_dong])
-        rieng = sum(len(d) for d in ma[den_dong:den_dong + 1])
-        return int(truoc + rieng * min(1.0, ti))
-
-    anh = Image.open(duong_anh).convert("RGB")
-    px = np.asarray(anh).astype(np.int16)
-
-    n = lap(fps * 2)
-    for i in range(n):
-        yield khung(anh, "vach_net_tu_anh.py", ma, cat_ma(1, (i + 1) / (n * 0.7)))
-
-    goc = vn.lui_khung(vn.tim_khung(px), 0.014)
-    n = lap(fps * 2.2)
-    for i in range(n):
-        ti = min(1.0, (i + 1) / (n * 0.6))
-        tam = anh.copy()
-        ve = ImageDraw.Draw(tam)
-        for j in range(4):
-            p, q = goc[j], goc[(j + 1) % 4]
-            if ti > j / 4.0:
-                k = min(1.0, (ti - j / 4.0) * 4)
-                ve.line([p, (p[0] + (q[0] - p[0]) * k, p[1] + (q[1] - p[1]) * k)],
-                        fill=(90, 240, 160), width=3)
-        for p in goc:
-            ve.ellipse([p[0] - 6, p[1] - 6, p[0] + 6, p[1] + 6], fill=(90, 240, 160))
-        yield khung(tam, "vach_net_tu_anh.py", ma, cat_ma(3, ti))
-
-    W, H = anh.size
-    x0 = min(p[0] for p in goc); x1 = max(p[0] for p in goc)
-    y0 = min(p[1] for p in goc); y1 = max(p[1] for p in goc)
-    chu_nhat = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
-    n = lap(fps * 2.4)
-    for i in range(n + lap(fps // 2)):
-        ti = min(1.0, i / n)
-        muot = ti * ti * (3 - 2 * ti)
-        dich = [(p[0] + (q[0] - p[0]) * muot, p[1] + (q[1] - p[1]) * muot)
-                for p, q in zip(goc, chu_nhat)]
-        hs = vn._he_so_phoi_canh(dich, goc)
-        yield khung(anh.transform((W, H), Image.PERSPECTIVE, hs, Image.BICUBIC),
-                    "vach_net_tu_anh.py", ma, cat_ma(4, ti))
-
-    ty = (goc[2][1] - goc[0][1]) / max(1e-6, goc[1][0] - goc[0][0])
-    rong = 1900
-    cao = int(round(rong * ty))
-    phang = vn.nan_phang(anh, goc, rong, cao)
-    m = vn.mat_na_vang(phang, nho_nhat=12.0)
-    anh_m = Image.fromarray(np.dstack([np.where(m, 250, 30).astype("uint8"),
-                                       np.where(m, 238, 26).astype("uint8"),
-                                       np.where(m, 58, 30).astype("uint8")]))
-    n = lap(fps * 2.6)
-    for i in range(n):
-        ti = min(1.0, (i + 1) / (n * 0.55))
-        yield khung(Image.blend(phang, anh_m, ti), "vach_net_tu_anh.py",
-                    ma, cat_ma(6 + int(ti * 3), ti))
-
-    hinh = vn.vach_net(m, 0.9, 12.0, 1.1, bo_qua=[o for _, o in vn.O_CHU])
-    n = lap(fps * 3)
-    for i in range(n):
-        den = int(len(hinh) * (i + 1) / n)
-        anh_b = Image.new("RGB", (rong, cao), NEN)
-        ve = ImageDraw.Draw(anh_b)
-        for _, mau, q in hinh[:den]:
-            diem = [(float(x), float(y)) for y, x in q]
+def _ve_hinh_da_giac(hinh, kich_thuoc, den, chi_vien=False):
+    anh = Image.new("RGB", kich_thuoc, NEN if chi_vien else lo.DO)
+    ve = ImageDraw.Draw(anh)
+    for _, mau, q in hinh[:den]:
+        diem = [(float(x), float(y)) for y, x in q]
+        if chi_vien:
             ve.line(diem + [diem[0]], fill=lo.VANG if mau == "vang" else (170, 60, 70),
                     width=2, joint="curve")
-        yield khung(anh_b, "vach_net_tu_anh.py", ma, cat_ma(10 + int(2 * i / n), (i + 1) / n))
+        else:
+            ve.polygon(diem, fill=lo.VANG if mau == "vang" else lo.DO)
+    return anh
 
-    n = lap(fps * 3.4)
-    for i in range(n):
-        den = int(len(hinh) * (i + 1) / n)
-        anh_t = Image.new("RGB", (rong, cao), lo.DO)
-        ve = ImageDraw.Draw(anh_t)
-        for _, mau, q in hinh[:den]:
-            ve.polygon([(float(x), float(y)) for y, x in q],
-                       fill=lo.VANG if mau == "vang" else lo.DO)
-        yield khung(anh_t, "ve_theo_tuong.py", ma, cat_ma(14 + int(2 * i / n), (i + 1) / n))
 
-    cuoi = Image.new("RGB", (rong, cao), lo.DO)
-    ve = ImageDraw.Draw(cuoi)
-    for _, mau, q in hinh:
-        ve.polygon([(float(x), float(y)) for y, x in q],
-                   fill=lo.VANG if mau == "vang" else lo.DO)
+def _dat_ten_dao(anh, rong, cao):
+    ve = ImageDraw.Draw(anh)
     for c, o in vn.O_CHU:
         ox0, oy0, ox1, oy1 = o
         hop = lo.lay_phong(100).getbbox(c)
@@ -389,8 +330,81 @@ def phan_day_chuyen(duong_anh, fps, lap):
                            (oy1 - oy0) * cao / max(1, hop[3] - hop[1])))
         ve.text((ox0 * rong, (oy0 + oy1) / 2 * cao), c,
                 font=lo.lay_phong(max(10, co)), fill=lo.VANG, anchor="lm")
-    for _ in range(lap(fps * 3)):
+    return anh
+
+
+def phan_day_chuyen(duong_anh, fps, lap):
+    """Phần 2: dây chuyền dựng bản cuối, không chiếu lại ảnh chụp."""
+    ma = MA_DAY_CHUYEN
+    tong_ma = sum(len(d) for d in ma)
+
+    def cat_ma(den_dong, ti):
+        truoc = sum(len(d) for d in ma[:den_dong])
+        rieng = len(ma[den_dong]) if den_dong < len(ma) else 0
+        return int(truoc + rieng * min(1.0, max(0.0, ti)))
+
+    anh = Image.open(duong_anh).convert("RGB")
+    goc = vn.lui_khung(vn.tim_khung(np.asarray(anh).astype(np.int16)), 0.014)
+    ty = (goc[2][1] - goc[0][1]) / max(1e-6, goc[1][0] - goc[0][0])
+    rong = 1900
+    cao = int(round(rong * ty))
+    phang = vn.nan_phang(anh, goc, rong, cao)
+    m = vn.mat_na_vang(phang, nho_nhat=12.0)
+    hinh = vn.vach_net(m, 0.9, 12.0, 1.1, bo_qua=[o for _, o in vn.O_CHU])
+
+    anh_m = Image.fromarray(np.dstack([np.where(m, 250, 30).astype("uint8"),
+                                       np.where(m, 238, 26).astype("uint8"),
+                                       np.where(m, 58, 30).astype("uint8")]))
+    toi = Image.new("RGB", anh_m.size, NEN)
+
+    n = lap(fps * 3)                                  # mặt nạ hai màu hiện dần
+    for i in range(n):
+        ti = min(1.0, (i + 1) / (n * 0.45))
+        yield khung(Image.blend(toi, anh_m, ti), "vach_net_tu_anh.py",
+                    ma, cat_ma(1 + int(ti * 5), ti))
+
+    n = lap(fps * 3)                                  # dò biên
+    for i in range(n):
+        ti = (i + 1) / n
+        yield khung(_ve_hinh_da_giac(hinh, (rong, cao), int(len(hinh) * ti), True),
+                    "vach_net_tu_anh.py", ma, cat_ma(7 + int(ti * 2), ti))
+
+    n = lap(fps * 3.4)                                # tô thành hình vector
+    for i in range(n):
+        ti = (i + 1) / n
+        yield khung(_ve_hinh_da_giac(hinh, (rong, cao), int(len(hinh) * ti)),
+                    "ve_theo_tuong.py", ma, cat_ma(11 + int(ti * 2), ti))
+
+    cuoi = _dat_ten_dao(_ve_hinh_da_giac(hinh, (rong, cao), len(hinh)), rong, cao)
+    for _ in range(lap(fps * 2)):
         yield khung(cuoi, "ve_theo_tuong.py", ma, tong_ma)
+    for k in phan_phao_hoa(cuoi, fps, lap):
+        yield k
+
+
+def phan_phao_hoa(tranh: Image.Image, fps, lap):
+    """Cảnh cuối: pháo hoa mô phỏng bằng hệ hạt, bức tranh hiện lên giữa trời."""
+    rong, cao = RONG_KH - 80, CAO_HINH - 60
+    troi = ph.PhaoHoa(rong, cao, hat_giong=7, mat_do=0.14)
+    cao_tranh = int(cao * 0.72)
+    nho = tranh.resize((int(cao_tranh * tranh.width / tranh.height), cao_tranh),
+                       Image.LANCZOS)
+    x0, y0 = (rong - nho.width) // 2, int(cao * 0.16)
+
+    n = lap(fps * 8)
+    for i in range(n):
+        if i in (1, 5, 11, 19, 28, 38, 50, 64, 80, 98, 118, 140, 164):
+            troi.ban_len()
+        troi.buoc()
+        nen = troi.anh()
+        mo = min(1.0, max(0.0, (i - lap(fps * 0.8)) / max(1, lap(fps * 1.2))))
+        if mo > 0:
+            vung = nen.crop((x0 - 6, y0 - 6, x0 + nho.width + 6, y0 + nho.height + 6))
+            khung_vien = Image.new("RGB", vung.size, (250, 238, 58))
+            khung_vien.paste(nho, (6, 6))
+            nen.paste(Image.blend(vung, khung_vien, mo), (x0 - 6, y0 - 6))
+        yield khung(nen, "phao_hoa.py", MA_PHAO_HOA,
+                    _go_dan(MA_PHAO_HOA, n, i, 0.7))
 
 
 def dung_phim(duong_anh, fps=25, nhanh=1.0):
