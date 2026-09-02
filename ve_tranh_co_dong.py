@@ -155,12 +155,13 @@ class Tranh(KhungVe):
     nên bờ hình mượt mà không sinh quầng sáng như các phép nội suy khác.
     """
 
-    def __init__(self, rong_ra: int = 2000, ty_le: int = 3):
+    def __init__(self, rong_ra: int = 2000, ty_le: int = 3, khung=None):
         super().__init__()
+        self.RONG, self.CAO = khung or (RONG, CAO)
         self.ty_le = max(1, ty_le)
         self.rong_ra = rong_ra
-        self.cao_ra = int(round(rong_ra * CAO / RONG))
-        self.s = rong_ra * self.ty_le / float(RONG)
+        self.cao_ra = int(round(rong_ra * self.CAO / self.RONG))
+        self.s = rong_ra * self.ty_le / float(self.RONG)
         self.anh = Image.new("RGB", (self.rong_ra * self.ty_le,
                                      self.cao_ra * self.ty_le), DO)
         self.ve = ImageDraw.Draw(self.anh)
@@ -203,8 +204,8 @@ class Tranh(KhungVe):
         lop = Image.new("RGB", self.anh.size, (0, 0, 0))
         mat_na = Image.new("L", self.anh.size, 0)
         ve = ImageDraw.Draw(mat_na)
-        for y in range(0, CAO, buoc):
-            ve.rectangle([0, y * self.s, RONG * self.s, (y + 2) * self.s], fill=dam)
+        for y in range(0, self.CAO, buoc):
+            ve.rectangle([0, y * self.s, self.RONG * self.s, (y + 2) * self.s], fill=dam)
         self.anh = Image.composite(lop, self.anh, mat_na)
         self.ve = ImageDraw.Draw(self.anh)
 
@@ -217,10 +218,11 @@ class Tranh(KhungVe):
 class TranhSVG(KhungVe):
     """Xuất ảnh vector: cùng một hình học, ghi ra đường path nên sắc nét ở mọi cỡ."""
 
-    def __init__(self, rong_ra: int = 2000, ty_le: int = 1):
+    def __init__(self, rong_ra: int = 2000, ty_le: int = 1, khung=None):
         super().__init__()
+        self.RONG, self.CAO = khung or (RONG, CAO)
         self.rong_ra = rong_ra
-        self.cao_ra = int(round(rong_ra * CAO / RONG))
+        self.cao_ra = int(round(rong_ra * self.CAO / self.RONG))
         self.phan_tu = []
         self.cua_cuon = None
 
@@ -249,14 +251,21 @@ class TranhSVG(KhungVe):
             'dominant-baseline="central">%s</text>' % (x, y, self._ma(mau), co * self.k, chu))
 
     def chu_vua_o(self, chu, o, mau=None):
+        """Cỡ chữ được đo trước cho vừa ô, không phó mặc thuộc tính textLength
+        vì nhiều trình dựng SVG bỏ qua thuộc tính này."""
         mau = VANG if mau is None else mau
         x0, y0, x1, y1 = o
+        phong = lay_phong(100)
+        hop = phong.getbbox(chu)
+        rong_chu = max(1, hop[2] - hop[0])
+        cao_chu = max(1, hop[3] - hop[1])
+        co = 100.0 * min((x1 - x0) / rong_chu, (y1 - y0) / cao_chu)
         self.phan_tu.append(
             '<text x="%.2f" y="%.2f" fill="%s" font-size="%.1f" font-weight="bold" '
             'font-family="DejaVu Sans, Arial, Helvetica, sans-serif" '
             'textLength="%.1f" lengthAdjust="spacingAndGlyphs" '
             'dominant-baseline="central">%s</text>'
-            % (x0, (y0 + y1) / 2, self._ma(mau), (y1 - y0) * 0.94, x1 - x0, chu))
+            % (x0, (y0 + y1) / 2, self._ma(mau), co, x1 - x0, chu))
 
     def vach_cua_cuon(self, buoc=26, dam=34):
         self.cua_cuon = (buoc, dam / 255.0)
@@ -266,13 +275,14 @@ class TranhSVG(KhungVe):
         if self.cua_cuon:
             buoc, mo = self.cua_cuon
             than += ['<rect x="0" y="%d" width="%d" height="2" fill="#000" '
-                     'opacity="%.2f"/>' % (y, RONG, mo) for y in range(0, CAO, buoc)]
+                     'opacity="%.2f"/>' % (y, self.RONG, mo)
+                     for y in range(0, self.CAO, buoc)]
         noi_dung = (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" '
             'viewBox="0 0 %d %d">\n<rect width="%d" height="%d" fill="%s"/>\n%s\n</svg>\n'
-            % (self.rong_ra, self.cao_ra, RONG, CAO, RONG, CAO, self._ma(DO),
-               "\n".join(than)))
+            % (self.rong_ra, self.cao_ra, self.RONG, self.CAO, self.RONG, self.CAO,
+               self._ma(DO), "\n".join(than)))
         with open(ten_tep, "w", encoding="utf-8") as f:
             f.write(noi_dung)
         return (self.rong_ra, self.cao_ra)

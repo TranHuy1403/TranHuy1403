@@ -1,10 +1,58 @@
 # 2-9-1945
 
-Hai chương trình Python vẽ hình về ngày Chủ tịch Hồ Chí Minh đọc bản Tuyên
-ngôn Độc lập tại Quảng trường Ba Đình, mồng 2 tháng 9 năm 1945. Mọi hình
-đều được sinh ra từ mã, không dùng ảnh có sẵn làm nguyên liệu.
+Các chương trình Python vẽ hình về ngày Chủ tịch Hồ Chí Minh đọc bản Tuyên
+ngôn Độc lập tại Quảng trường Ba Đình, mồng 2 tháng 9 năm 1945.
 
-## 1. Tranh cổ động hai màu — `ve_tranh_co_dong.py`
+Bản đầu vạch nét từ ảnh chụp một bức tranh tường nên đường nét giống hệt bản
+vẽ tay; hai bản sau sinh hình hoàn toàn bằng mã.
+
+## 1. Vạch nét thẳng từ ảnh bức tranh tường — `vach_net_tu_anh.py` + `ve_theo_tuong.py`
+
+Cách cho ra đường nét **giống hệt bản vẽ tay trên tường**: lấy chính bức ảnh
+chụp làm gốc, vạch lấy đường biên rồi dựng lại thành vector.
+
+![Tranh tường vạch nét lại](tranh_tuong_2_9_1945.png)
+
+```bash
+pip install pillow numpy scikit-image
+python3 vach_net_tu_anh.py anh_chup.jpg -o net_tranh_tuong.json   # vạch nét
+python3 ve_theo_tuong.py -o tranh.png                             # vẽ lại
+python3 ve_theo_tuong.py -o tranh.svg                             # bản vector
+```
+
+Tệp `net_tranh_tuong.json` đã có sẵn trong kho (50 hình, hơn 1500 điểm) nên
+chỉ cần Pillow là vẽ lại được; bước vạch nét chỉ chạy khi muốn đổi ảnh gốc.
+
+**Bốn bước của `vach_net_tu_anh.py`:**
+
+1. **Tìm khung tranh.** Lọc các điểm ảnh đỏ hoặc vàng đậm, khớp đường thẳng
+   cho mép trái và mép phải để suy ra bốn góc bức tranh trong ảnh chụp.
+2. **Nắn phẳng.** Phép biến đổi phối cảnh đưa bốn góc ấy về một hình chữ
+   nhật, khử độ nghiêng của máy ảnh.
+3. **Tách hai màu.** Chuyển sang hệ màu HSV rồi lấy vùng vàng theo sắc màu —
+   nhờ vậy các vạch tối của cánh cửa cuốn và những vệt loá không lọt vào.
+   Mặt nạ được dọn bằng các phép hình thái học.
+4. **Vạch biên và giản lược.** Dò biên bằng marching squares (chính xác dưới
+   một điểm ảnh) rồi giản lược bằng Douglas-Peucker. Màu của mỗi đường biên
+   xác định bằng cách lấy mẫu ngay bên trong nó; các hình xếp theo diện tích
+   giảm dần nên chỗ lồng nhau như vành micro hay con ngươi đều đúng.
+
+Hai nhãn *Hoàng Sa* và *Trường Sa* trong ảnh quá nhỏ để vạch cho ra chữ đọc
+được, nên vùng ấy được bỏ qua khi vạch nét và vẽ lại bằng phông chữ.
+
+| Tuỳ chọn của `ve_theo_tuong.py` | Ý nghĩa |
+|---|---|
+| `-o`, `--output` | Tên tệp xuất ra; đuôi `.svg` thì xuất bản vector |
+| `--net` | Tệp dữ liệu đã vạch nét (mặc định `net_tranh_tuong.json`) |
+| `--rong` | Bề rộng ảnh xuất ra (mặc định `2000`) |
+| `--mau` | `tuong` (màu đo từ bức tường) hoặc `co` (theo mẫu quốc kỳ) |
+| `--khong-chu` | Bỏ hai nhãn Hoàng Sa và Trường Sa |
+| `--cua-cuon` | Thêm vạch ngang mô phỏng cánh cửa cuốn |
+
+Mép trái bức ảnh gốc bị khuôn hình cắt mất một phần chữ *2* và cánh tay, nên
+bản vạch nét cũng thiếu đúng phần đó.
+
+## 2. Tranh cổ động hai màu vẽ hoàn toàn bằng mã — `ve_tranh_co_dong.py`
 
 Vẽ theo lối tranh tường quen thuộc: nền đỏ cờ, hình vàng phẳng, không tô
 bóng. Bên trái là chân dung Bác bên chiếc micro, bên phải là bản đồ Việt
@@ -73,7 +121,7 @@ Ngoài ra:
 - Lớp `KhungVe` gom phần chung của hai kiểu xuất: mọi hình đều quy về mảng,
   đường tròn và chữ, nên bản PNG và bản SVG luôn giống hệt nhau.
 
-## 2. Ảnh tư liệu dựng bằng bản đồ độ cao — `ve_bac_ho_doc_tuyen_ngon.py`
+## 3. Ảnh tư liệu dựng bằng bản đồ độ cao — `ve_bac_ho_doc_tuyen_ngon.py`
 
 Bản thử theo hướng khác: dựng một bản đồ độ cao cho toàn cảnh (hộp sọ, gò
 má, sống mũi, thân áo, micro), tính pháp tuyến bề mặt rồi chiếu sáng từng
