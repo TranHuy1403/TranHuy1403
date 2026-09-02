@@ -71,7 +71,29 @@ Hai nhãn *Hoàng Sa* và *Trường Sa* trong ảnh quá nhỏ để vạch cho
 Mép trái bức ảnh gốc bị khuôn hình cắt mất một phần chữ *2* và cánh tay, nên
 bản vạch nét cũng thiếu đúng phần đó.
 
-### Quay lại quá trình — `quay_qua_trinh.py`
+### Phim hai phần, dải dưới chiếu mã nguồn — `quay_phim_lap_trinh.py`
+
+Phim kể lại việc bức tranh được sinh ra bằng lập trình, chia hai phần:
+
+1. **Định bản phác hoạ** — khung tranh trống, các ô bố cục hiện ra bằng nét
+   đứt, rồi bản vẽ bằng mã được dựng dần từng hình một, đúng thứ tự mà
+   chương trình gọi lệnh vẽ. Làm được điều này nhờ lớp `TranhGhi` kế thừa
+   `Tranh`: mọi lệnh vẽ được ghi vào nhật ký rồi phát lại dần.
+2. **Dây chuyền dựng bản cuối** — ảnh chụp bức tường đi qua các bước tìm
+   góc, nắn phẳng, tách hai màu, dò biên, dựng vector.
+
+Dải dưới khung hình không ghi tên bước mà chiếu chính những dòng mã làm nên
+cảnh đang xem, gõ ra từng chữ, có tô màu từ khoá - chuỗi - con số như trong
+trình soạn thảo.
+
+```bash
+python3 quay_phim_lap_trinh.py anh_chup.jpg -o qua_trinh_lap_trinh.mp4
+python3 quay_phim_lap_trinh.py anh_chup.jpg -o phim.gif --nhanh 1.6
+```
+
+Bản dựng sẵn: [`qua_trinh_lap_trinh.mp4`](qua_trinh_lap_trinh.mp4) — 31,9 giây.
+
+### Quay riêng dây chuyền vạch nét — `quay_qua_trinh.py`
 
 Dựng một đoạn phim đi qua đúng sáu bước trên, mỗi khung hình lấy từ kết quả
 thật của bước ấy chứ không dàn dựng: ảnh chụp, bốn góc tìm được, cảnh nắn
