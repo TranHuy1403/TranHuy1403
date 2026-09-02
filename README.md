@@ -15,17 +15,31 @@ phía dưới là dòng chữ 2-9-1945.
 
 ```bash
 pip install pillow
-python3 ve_tranh_co_dong.py
+python3 ve_tranh_co_dong.py                       # ảnh PNG rộng 2000 điểm ảnh
+python3 ve_tranh_co_dong.py -o tranh.svg          # bản vector, sắc nét ở mọi cỡ
 ```
 
 | Tuỳ chọn | Ý nghĩa |
 |---|---|
-| `-o`, `--output` | Tên tệp ảnh xuất ra (mặc định `tranh_co_dong_2_9_1945.png`) |
-| `--rong` | Chiều rộng ảnh tính bằng điểm ảnh (mặc định `1600`) |
-| `--ty-le` | Hệ số siêu lấy mẫu khi vẽ, càng lớn bờ hình càng mịn (mặc định `3`) |
+| `-o`, `--output` | Tên tệp xuất ra; đuôi `.svg` thì xuất bản vector |
+| `--rong` | Chiều rộng ảnh tính bằng điểm ảnh (mặc định `2000`) |
+| `--ty-le` | Hệ số siêu lấy mẫu khi vẽ ảnh điểm (mặc định `3`) |
 | `--chu` | Dòng chữ phía dưới (mặc định `2-9-1945`) |
+| `--mau` | `tuong` (màu đo từ bức tường) hoặc `co` (theo mẫu quốc kỳ) |
 | `--seed` | Hạt giống cho nhịp tay vẽ của các lọn tóc và sợi râu (mặc định `29`) |
 | `--cua-cuon` | Thêm vạch ngang mô phỏng cánh cửa cuốn nơi vẽ tranh tường |
+
+### Vì sao hình sắc nét
+
+- **Xuất được bản vector.** Cùng một hình học, `TranhSVG` ghi thẳng ra các
+  thẻ `polygon`, `circle`, `text` nên phóng to bao nhiêu cũng không vỡ nét;
+  đem in khổ lớn hay mở bằng trình vẽ vector để sửa đều được.
+- **Thu ảnh bằng phép lấy trung bình theo ô.** Bản PNG vẽ lớn gấp `--ty-le`
+  lần rồi thu về bằng `Image.reduce` với hệ số nguyên. Các phép nội suy như
+  LANCZOS sinh quầng sáng dọc bờ hình giữa hai màu tương phản mạnh, còn
+  phép trung bình theo ô thì không, nên bờ hình vừa mượt vừa gọn.
+- **Bảng màu đo từ chính bức tường**: đỏ hơi ngả son `#d61630`, vàng chanh
+  `#faee3a` — không phải vàng nghệ như bảng màu mặc định thường thấy.
 
 ### Thuật toán vẽ
 
@@ -56,10 +70,8 @@ Ngoài ra:
   trên biên giới và bờ biển theo (kinh độ, vĩ độ), hàm `_diem_ban_do()`
   chiếu thẳng vào ô chứa bản đồ nên dáng chữ S đúng tỉ lệ. Hai quần đảo
   giữ đúng vĩ độ, còn hoành độ được kéo lại gần cho vừa khuôn hình.
-- `Tranh.dat_khung()` co giãn và dời cả nhóm hình, nhờ vậy chân dung được
-  vẽ trong hệ toạ độ riêng rồi đặt vào khuôn tranh.
-- Dòng chữ được vẽ ra mặt nạ riêng rồi co giãn vừa ô đã định, nên bố cục
-  không đổi dù máy dùng phông chữ nào.
+- Lớp `KhungVe` gom phần chung của hai kiểu xuất: mọi hình đều quy về mảng,
+  đường tròn và chữ, nên bản PNG và bản SVG luôn giống hệt nhau.
 
 ## 2. Ảnh tư liệu dựng bằng bản đồ độ cao — `ve_bac_ho_doc_tuyen_ngon.py`
 
