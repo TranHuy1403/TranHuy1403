@@ -82,7 +82,11 @@ khép lại bằng cảnh pháo hoa:
    `Tranh`: mọi lệnh vẽ được ghi vào nhật ký rồi phát lại dần.
 2. **Dây chuyền dựng bản cuối** — mặt nạ hai màu hiện lên, các đường biên
    được dò lần lượt, rồi hình vector được tô từ lớn đến nhỏ.
-3. **Pháo hoa** — cảnh khép lại chỉ có pháo hoa trên trời đêm.
+3. **Pháo hoa** — chân dung hiện dần bằng nét trắng trên trời đêm, pháo hoa
+   nổ chung quanh. Chân dung ở đây không phải ảnh dán vào mà được vẽ lại từ
+   chính dữ liệu vector đã vạch nét: mỗi đường biên là một nét, vẽ dần từ
+   hình lớn đến hình nhỏ. Quầng sáng của nét thì cộng vào trời, còn nét sắc
+   thì tô đè lên, nhờ vậy pháo hoa dù chói cỡ nào cũng không nuốt mất hình.
 
 Dải dưới khung hình không ghi tên bước mà chiếu **mã nguồn bằng tiếng Anh**
 làm nên cảnh đang xem, gõ ra từng chữ, có tô màu từ khoá - chuỗi - con số.

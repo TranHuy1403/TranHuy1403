@@ -22,7 +22,7 @@ import argparse
 import re
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 import phao_hoa as ph
 import vach_net_tu_anh as vn
@@ -378,22 +378,51 @@ def phan_day_chuyen(duong_anh, fps, lap):
     cuoi = _dat_ten_dao(_ve_hinh_da_giac(hinh, (rong, cao), len(hinh)), rong, cao)
     for _ in range(lap(fps * 2)):
         yield khung(cuoi, "ve_theo_tuong.py", ma, tong_ma)
-    for k in phan_phao_hoa(fps, lap):
+    for k in phan_phao_hoa(hinh, (rong, cao), fps, lap):
         yield k
 
 
-def phan_phao_hoa(fps, lap):
-    """Cảnh cuối: chỉ có pháo hoa, mô phỏng bằng hệ hạt."""
-    rong, cao = RONG_KH - 80, CAO_HINH - 60
-    troi = ph.PhaoHoa(rong, cao, hat_giong=7, mat_do=0.16)
+def phan_phao_hoa(hinh, kich_thuoc, fps, lap):
+    """Cảnh cuối: pháo hoa mô phỏng bằng hệ hạt, chân dung hiện dần bằng nét.
 
-    n = lap(fps * 8)
+    Chân dung ở đây không phải ảnh dán vào mà được vẽ lại từ chính dữ liệu
+    vector đã vạch nét: mỗi đường biên là một nét trắng, vẽ dần từ hình lớn
+    đến hình nhỏ, có quầng sáng mềm để hoà vào trời đêm.
+    """
+    rong, cao = RONG_KH - 80, CAO_HINH - 60
+    troi = ph.PhaoHoa(rong, cao, hat_giong=7, mat_do=0.115)
+
+    kt_rong, kt_cao = kich_thuoc
+    ty = min(rong * 0.94 / kt_rong, cao * 0.90 / kt_cao)
+    dx = (rong - kt_rong * ty) / 2
+    dy = (cao - kt_cao * ty) / 2
+    duong = [[(float(x) * ty + dx, float(y) * ty + dy) for y, x in q]
+             for _, _, q in hinh]
+
+    n = lap(fps * 9)
     for i in range(n):
-        if i in (1, 5, 10, 16, 23, 31, 40, 50, 61, 73, 86, 100, 115, 131, 148, 166):
+        if i in (1, 6, 13, 22, 33, 46, 61, 78, 97, 118, 141, 166, 193):
             troi.ban_len()
         troi.buoc()
-        yield khung(troi.anh(), "phao_hoa.py", MA_PHAO_HOA,
-                    _go_dan(MA_PHAO_HOA, n, i, 0.7))
+        nen = troi.anh()
+
+        den = int(len(duong) * min(1.0, (i + 1) / max(1, n * 0.42)))
+        if den:
+            # Nét vẽ nằm trên một lớp mặt nạ riêng: quầng sáng thì cộng vào
+            # trời, còn nét sắc thì tô đè lên, nhờ vậy pháo hoa dù chói cỡ
+            # nào cũng không nuốt mất chân dung.
+            net = Image.new("L", (rong, cao), 0)
+            ve = ImageDraw.Draw(net)
+            for d in duong[:den]:
+                ve.line(d + [d[0]], fill=255, width=3, joint="curve")
+            hao = net.filter(ImageFilter.GaussianBlur(9))
+            nen = ImageChops.add(nen, Image.merge("RGB", (
+                Image.eval(hao, lambda p: int(p * 0.42)),
+                Image.eval(hao, lambda p: int(p * 0.40)),
+                Image.eval(hao, lambda p: int(p * 0.34)))))
+            nen.paste((240, 237, 230), mask=net)
+        yield khung(nen, "phao_hoa.py", MA_PHAO_HOA,
+                    _go_dan(MA_PHAO_HOA, n, i, 0.6))
 
 
 def dung_phim(duong_anh, fps=25, nhanh=1.0):
