@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Vẽ lại bức ảnh tư liệu: Chủ tịch Hồ Chí Minh đọc Tuyên ngôn Độc lập
+"""Dựng lại bức ảnh tư liệu: Chủ tịch Hồ Chí Minh đọc Tuyên ngôn Độc lập
 tại Quảng trường Ba Đình, ngày 2 tháng 9 năm 1945.
 
-Toàn bộ hình được dựng bằng các hình khối cơ bản (đa giác, ellipse, đường
-cong) rồi phủ các hiệu ứng ảnh cũ: nhoè nhẹ, hạt phim, ám màu nâu sepia,
-tối bốn góc (vignette) và khung viền ảnh.
+Ảnh không được tô bằng các mảng màu phẳng. Chương trình dựng một bản đồ độ
+cao (height field) cho toàn cảnh - hộp sọ, gò má, sống mũi, môi, cổ, thân
+áo, micro - rồi từ bản đồ ấy tính pháp tuyến bề mặt và chiếu sáng từng điểm
+ảnh theo mô hình Lambert cộng phản xạ bóng. Nhờ vậy khối nổi và chuyển sáng
+tối là do hình học sinh ra, giống cách ánh sáng rơi trên vật thật.
 
-Yêu cầu: Python 3.8+ và thư viện Pillow  ->  pip install pillow
+Sau khi tô bóng, ảnh được phủ các đặc trưng của một tấm ảnh chụp năm 1945:
+độ nét giảm dần ra hậu cảnh, hạt phim, ám nâu, tối bốn góc và khung viền.
+
+Yêu cầu: Python 3.8+, Pillow và NumPy  ->  pip install pillow numpy
 
 Cách dùng:
     python3 ve_bac_ho_doc_tuyen_ngon.py
@@ -17,518 +22,661 @@ Cách dùng:
 from __future__ import annotations
 
 import argparse
-import math
 import os
-import random
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 # --------------------------------------------------------------------------
-# Kích thước khung tranh gốc (mọi toạ độ bên dưới đều tính theo hệ này)
+# Khung ảnh và lưới toạ độ
 # --------------------------------------------------------------------------
-RONG, CAO = 900, 1200
+RONG, CAO = 1000, 1340
+SS = 2                      # bội số khi raster hoá mặt nạ, để bờ hình mịn
 
-# Bảng màu làm việc (ảnh sẽ được ám nâu ở bước cuối nên ở đây chỉ cần
-# đúng về độ sáng - tối, không cần đúng màu thật).
-MAU = {
-    "nen_tren": (132, 130, 126),
-    "nen_duoi": (74, 73, 71),
-    "hao_quang": (170, 168, 162),
-    "ao": (192, 187, 172),      # áo kaki sáng màu
-    "ao_toi": (132, 128, 117),
-    "ao_sang": (238, 234, 222),
-    "da": (152, 137, 117),
-    "da_toi": (120, 106, 88),
-    "toc": (46, 40, 34),
-    "rau": (122, 113, 100),
-    "mat": (36, 31, 27),
-    "ban": (54, 51, 47),
-    "ban_sang": (86, 82, 76),
-    "giay": (238, 234, 223),
-    "kim_loai": (74, 72, 69),
-    "kim_loai_sang": (176, 173, 166),
-}
+Y, X = np.mgrid[0:CAO, 0:RONG].astype(np.float32)
+
+# Phép biến đổi toạ độ dùng chung: cho phép mô tả từng bộ phận trong hệ toạ độ
+# riêng của nó rồi đặt vào khung ảnh với tỉ lệ khác nhau (đầu vẽ to hơn thân).
+_BD = [1.0, 0.0, 0.0]      # [tỉ lệ, dời ngang, dời dọc]
 
 
-class BucTranh:
-    """Khung vẽ có siêu lấy mẫu (supersampling) và hai lớp sáng / tối riêng."""
+def dat_bien_doi(ty_le=1.0, dx=0.0, dy=0.0):
+    _BD[:] = [ty_le, dx, dy]
 
-    def __init__(self, ty_le: int = 3):
-        self.s = ty_le
-        kich_thuoc = (RONG * ty_le, CAO * ty_le)
-        self.anh = Image.new("RGB", kich_thuoc, MAU["nen_duoi"])
-        self.ve = ImageDraw.Draw(self.anh)
-        # Lớp mặt nạ: 0 = giữ nguyên, 255 = tô tối / sáng hoàn toàn.
-        self.lop_toi = Image.new("L", kich_thuoc, 0)
-        self.ve_toi = ImageDraw.Draw(self.lop_toi)
-        self.lop_net = Image.new("L", kich_thuoc, 0)      # bóng nét, gần như không nhoè
-        self.ve_net = ImageDraw.Draw(self.lop_net)
-        self.lop_sang = Image.new("L", kich_thuoc, 0)
-        self.ve_sang = ImageDraw.Draw(self.lop_sang)
 
-    # -- tiện ích toạ độ ---------------------------------------------------
-    def q(self, diem):
-        """Quy đổi một dãy điểm sang hệ toạ độ đã phóng to."""
-        return [(x * self.s, y * self.s) for x, y in diem]
+def _tx(x):
+    return x * _BD[0] + _BD[1]
 
-    def h(self, hop):
-        """Quy đổi một hình chữ nhật (x0, y0, x1, y1)."""
-        x0, y0, x1, y1 = hop
-        return [x0 * self.s, y0 * self.s, x1 * self.s, y1 * self.s]
 
-    def n(self, gia_tri):
-        return gia_tri * self.s
+def _ty(y):
+    return y * _BD[0] + _BD[2]
 
-    # -- các nét vẽ cơ bản -------------------------------------------------
-    def da_giac(self, diem, mau):
-        self.ve.polygon(self.q(diem), fill=mau)
 
-    def bau_duc(self, hop, mau):
-        self.ve.ellipse(self.h(hop), fill=mau)
-
-    def duong(self, diem, mau, day=2):
-        self.ve.line(self.q(diem), fill=mau, width=max(1, self.n(day)), joint="curve")
-
-    def toi(self, hinh, dam=255, net=False):
-        """Ghi một vùng vào lớp tối (hinh: ('da_giac'|'bau_duc', dữ liệu)).
-
-        net=True dùng cho các chi tiết nhỏ cần giữ nét: nếp nhăn, mí mắt,
-        ngón tay, mép túi áo...
-        """
-        but = self.ve_net if net else self.ve_toi
-        loai, du_lieu = hinh
-        if loai == "bau_duc":
-            but.ellipse(self.h(du_lieu), fill=dam)
-        else:
-            but.polygon(self.q(du_lieu), fill=dam)
-
-    def sang(self, hinh, dam=255):
-        loai, du_lieu = hinh
-        if loai == "bau_duc":
-            self.ve_sang.ellipse(self.h(du_lieu), fill=dam)
-        else:
-            self.ve_sang.polygon(self.q(du_lieu), fill=dam)
-
-    # -- hoàn thiện --------------------------------------------------------
-    def hop_nhat(self, nhoe=6, do_toi=0.62, do_net=0.55, do_sang=0.3):
-        """Trộn các lớp sáng / tối vào ảnh chính."""
-        toi_mau = Image.new("RGB", self.anh.size, (28, 25, 22))
-        mn_toi = self.lop_toi.filter(ImageFilter.GaussianBlur(self.n(nhoe)))
-        mn_toi = mn_toi.point(lambda v: int(v * do_toi))
-        self.anh = Image.composite(toi_mau, self.anh, mn_toi)
-
-        mn_net = self.lop_net.filter(ImageFilter.GaussianBlur(self.n(1.2)))
-        mn_net = mn_net.point(lambda v: int(v * do_net))
-        self.anh = Image.composite(toi_mau, self.anh, mn_net)
-        mn_sang = self.lop_sang.filter(ImageFilter.GaussianBlur(self.n(nhoe + 2)))
-        mn_sang = mn_sang.point(lambda v: int(v * do_sang))
-        self.anh = Image.composite(
-            Image.new("RGB", self.anh.size, (247, 244, 236)), self.anh, mn_sang
-        )
-        self.ve = ImageDraw.Draw(self.anh)
-
-    def thu_nho(self):
-        return self.anh.resize((RONG, CAO), Image.LANCZOS)
+def _tr(r):
+    return r * _BD[0]
 
 
 # --------------------------------------------------------------------------
-# 1. Phông nền
+# Công cụ: raster hoá mặt nạ và làm mềm
 # --------------------------------------------------------------------------
-def ve_nen(t: BucTranh) -> None:
-    tren, duoi = MAU["nen_tren"], MAU["nen_duoi"]
-    for y in range(CAO):
-        k = y / CAO
-        mau = tuple(int(tren[i] + (duoi[i] - tren[i]) * k) for i in range(3))
-        t.ve.rectangle(t.h((0, y, RONG, y + 1)), fill=mau)
-
-    # Quầng sáng phía sau đầu cho chân dung nổi lên khỏi phông.
-    hao_quang = Image.new("L", t.anh.size, 0)
-    ImageDraw.Draw(hao_quang).ellipse(t.h((150, 60, 720, 700)), fill=88)
-    hao_quang = hao_quang.filter(ImageFilter.GaussianBlur(t.n(70)))
-    t.anh = Image.composite(
-        Image.new("RGB", t.anh.size, MAU["hao_quang"]), t.anh, hao_quang
-    )
-    t.ve = ImageDraw.Draw(t.anh)
+def _khung_ve():
+    anh = Image.new("L", (RONG * SS, CAO * SS), 0)
+    return anh, ImageDraw.Draw(anh)
 
 
-# --------------------------------------------------------------------------
-# 2. Bàn phủ khăn và tập bản Tuyên ngôn
-# --------------------------------------------------------------------------
-def ve_bong_nguoi(t: BucTranh) -> None:
-    """Bóng của người hắt lên phông, đặt lệch sang phải như nguồn sáng bên trái."""
-    t.toi(("da_giac", [(214, 1010), (250, 640), (330, 566), (432, 528), (540, 566),
-                       (640, 640), (700, 800), (742, 1010)]), 60)
-    t.toi(("bau_duc", (386, 208, 566, 500)), 55)
+def _thu(anh: Image.Image) -> np.ndarray:
+    """Thu mặt nạ về đúng khung, lấy trung bình nên bờ hình mịn."""
+    nho = anh.resize((RONG, CAO), Image.BOX)
+    return np.asarray(nho, dtype=np.float32) / 255.0
 
 
-def ve_ban(t: BucTranh) -> None:
-    t.da_giac([(0, 1006), (RONG, 990), (RONG, CAO), (0, CAO)], MAU["ban"])
-    t.duong([(0, 1008), (RONG, 992)], MAU["ban_sang"], day=4)
-    # Nếp gấp buông xuống của khăn phủ bàn.
-    for x in range(30, RONG, 78):
-        lech = random.randint(-14, 14)
-        t.toi(("da_giac", [(x, 1010), (x + 20, 1010), (x + 26 + lech, CAO),
-                           (x + lech, CAO)]), 120, net=True)
-        t.sang(("da_giac", [(x + 20, 1012), (x + 30, 1012), (x + 36 + lech, CAO), (x + 26 + lech, CAO)]), 70)
+def mn_da_giac(diem) -> np.ndarray:
+    anh, ve = _khung_ve()
+    ve.polygon([(_tx(x) * SS, _ty(y) * SS) for x, y in diem], fill=255)
+    return _thu(anh)
 
 
-def ve_ban_tuyen_ngon(t: BucTranh) -> None:
-    """Tập giấy bản Tuyên ngôn đặt trên mặt bàn."""
-    giay = [(288, 1000), (520, 982), (556, 1030), (322, 1054)]
-    t.da_giac(giay, MAU["giay"])
-    t.toi(("da_giac", [(288, 1000), (322, 1054), (316, 1062), (284, 1008)]), 120)
-    # Vài hàng chữ mờ trên trang giấy.
-    for i in range(7):
-        y = 1000 + i * 7
-        t.duong([(306 + i, y + 4), (306 + i + random.randint(140, 210), y - 12 + i)],
-                (176, 170, 158), day=1)
+def mn_bau_duc(hop) -> np.ndarray:
+    x0, y0, x1, y1 = hop
+    anh, ve = _khung_ve()
+    ve.ellipse([_tx(x0) * SS, _ty(y0) * SS, _tx(x1) * SS, _ty(y1) * SS], fill=255)
+    return _thu(anh)
 
 
-# --------------------------------------------------------------------------
-# 3. Thân người: áo kaki bốn túi
-# --------------------------------------------------------------------------
-def _vien(t: BucTranh, diem, dam=120, day=7):
-    """Viền tối mềm chạy quanh một hình khối để tách nó khỏi phông."""
-    t.ve_toi.line(t.q(list(diem) + [diem[0]]), fill=dam,
-                  width=max(1, t.n(day)), joint="curve")
+def mn_duong(diem, day, kin=False) -> np.ndarray:
+    anh, ve = _khung_ve()
+    d = [(_tx(x) * SS, _ty(y) * SS) for x, y in diem]
+    if kin:
+        d = d + [d[0]]
+    ve.line(d, fill=255, width=max(1, int(_tr(day) * SS)), joint="curve")
+    return _thu(anh)
 
 
-def ve_than(t: BucTranh) -> None:
-    than = [
-        (150, 1010), (168, 828), (196, 694), (250, 608), (320, 552), (382, 518),
-        (432, 508), (482, 518), (544, 552), (614, 608), (668, 694), (696, 828),
-        (714, 1010),
-    ]
-    t.da_giac(than, MAU["ao"])
-    _vien(t, than, dam=150, day=10)
-
-    # Khối sáng tối của thân áo: nguồn sáng chếch từ trái phía trước.
-    t.toi(("da_giac", [(150, 1010), (168, 828), (202, 688), (256, 612), (276, 668),
-                       (222, 764), (214, 1010)]), 150)
-    t.toi(("da_giac", [(714, 1010), (696, 828), (662, 688), (608, 612), (588, 668),
-                       (642, 768), (652, 1010)]), 165)
-    t.sang(("da_giac", [(328, 586), (432, 556), (536, 586), (526, 674), (432, 630),
-                        (338, 664)]), 80)
-
-    # Đường vai và tay áo tách khỏi thân.
-    for x0, x1, huong in ((252, 292, -1), (612, 572, 1)):
-        t.toi(("da_giac", [(x0, 600), (x0 + 14 * huong, 606), (x1 + 14 * huong, 1010),
-                           (x1, 1010)]), 110)
-
-    # Cổ áo đứng, hai ve áo mở.
-    t.da_giac([(382, 520), (432, 500), (482, 520), (496, 576), (432, 546), (368, 576)],
-              MAU["ao_toi"])
-    t.sang(("da_giac", [(394, 528), (432, 514), (470, 528), (474, 558), (432, 536),
-                        (392, 558)]), 60)
-    t.toi(("da_giac", [(368, 570), (432, 542), (496, 570), (490, 586), (432, 558),
-                       (374, 586)]), 150, net=True)
-
-    # Nẹp áo và hàng cúc.
-    t.da_giac([(418, 548), (448, 552), (462, 1010), (434, 1010)], MAU["ao_toi"])
-    t.toi(("da_giac", [(418, 548), (430, 550), (440, 1010), (426, 1010)]), 90)
-    for y in (664, 754, 844, 934):
-        t.bau_duc((434, y - 9, 452, y + 9), MAU["ao_toi"])
-        t.toi(("bau_duc", (432, y - 10, 454, y + 10)), 150, net=True)
-        t.sang(("bau_duc", (437, y - 6, 446, y + 1)), 110)
-
-    # Hai túi ngực có nắp.
-    for x0, x1 in ((262, 380), (508, 626)):
-        t.duong([(x0, 716), (x1, 708), (x1 + 4, 808), (x0 + 2, 816), (x0, 716)],
-                MAU["ao_toi"], day=3)
-        t.da_giac([(x0 - 6, 704), (x1 + 6, 696), (x1 + 8, 732), (x0 - 4, 740)], MAU["ao"])
-        t.toi(("da_giac", [(x0 - 6, 728), (x1 + 8, 720), (x1 + 8, 736), (x0 - 4, 744)]),
-              170, net=True)
-        t.sang(("da_giac", [(x0 - 4, 706), (x1 + 6, 698), (x1 + 6, 708), (x0 - 4, 716)]), 60)
-
-    # Nếp nhăn vải.
-    for a, b, c, d in ((248, 852, 306, 1000), (306, 892, 348, 1006),
-                       (588, 842, 552, 1000), (642, 792, 612, 970)):
-        t.toi(("da_giac", [(a, b), (a + 13, b), (c + 13, d), (c, d)]), 95)
-
-    # Đường nách áo tách cánh tay khỏi thân, tay buông xuống mặt bàn.
-    t.toi(("da_giac", [(250, 620), (272, 616), (300, 830), (306, 1010), (282, 1010),
-                       (274, 838)]), 105)
-    t.sang(("da_giac", [(206, 718), (244, 700), (266, 900), (268, 1006), (232, 1006),
-                        (222, 880)]), 55)
-    canh_tay = [(186, 754), (256, 734), (300, 936), (306, 964), (232, 986), (212, 908)]
-    t.da_giac(canh_tay, MAU["ao"])
-    t.toi(("da_giac", [(256, 734), (272, 746), (312, 938), (306, 964), (280, 952)]), 130)
-    t.toi(("da_giac", [(186, 754), (202, 750), (224, 902), (238, 978), (216, 982)]), 95)
-    t.sang(("da_giac", [(214, 752), (248, 742), (284, 918), (256, 930)]), 60)
-    t.toi(("da_giac", [(222, 938), (304, 914), (310, 942), (228, 966)]), 110,
-          net=True)                                                       # cửa tay áo
+def mn_chu_nhat_tron(hop, ban_kinh) -> np.ndarray:
+    x0, y0, x1, y1 = hop
+    anh, ve = _khung_ve()
+    ve.rounded_rectangle([_tx(x0) * SS, _ty(y0) * SS, _tx(x1) * SS, _ty(y1) * SS],
+                         radius=_tr(ban_kinh) * SS, fill=255)
+    return _thu(anh)
 
 
-def _ngon_tay(t: BucTranh, p0, p1, day, mau):
-    """Một ngón tay: đoạn thẳng bo tròn hai đầu."""
-    (x0, y0), (x1, y1) = p0, p1
-    dx, dy = x1 - x0, y1 - y0
-    dai = math.hypot(dx, dy) or 1.0
-    nx, ny = -dy / dai * day / 2, dx / dai * day / 2
-    t.da_giac([(x0 + nx, y0 + ny), (x1 + nx, y1 + ny),
-               (x1 - nx, y1 - ny), (x0 - nx, y0 - ny)], mau)
-    t.bau_duc((x0 - day / 2, y0 - day / 2, x0 + day / 2, y0 + day / 2), mau)
-    t.bau_duc((x1 - day / 2, y1 - day / 2, x1 + day / 2, y1 + day / 2), mau)
+def _hop_mo(a: np.ndarray, k: int) -> np.ndarray:
+    """Làm mờ hộp bán kính k bằng ảnh tích phân."""
+    if k < 1:
+        return a
+    dem = np.pad(a, ((k, k), (k, k)), mode="edge")
+    tp = dem.cumsum(0).cumsum(1)
+    tp = np.pad(tp, ((1, 0), (1, 0)))
+    c = 2 * k + 1
+    tong = (tp[c:, c:] - tp[:-c, c:] - tp[c:, :-c] + tp[:-c, :-c])
+    return tong / float(c * c)
 
 
-def ve_ban_tay(t: BucTranh) -> None:
-    """Bàn tay đặt hờ trên mặt bàn, các ngón hơi khép."""
-    t.toi(("bau_duc", (196, 1004, 344, 1044)), 140)          # bóng đổ trên mặt bàn
-
-    ban_tay = [(214, 960), (262, 956), (306, 980), (318, 1006), (300, 1024),
-               (250, 1026), (216, 1006)]
-    t.da_giac(ban_tay, MAU["da"])
-    t.toi(("da_giac", ban_tay), 95)
-    for i in range(3):                                        # kẽ ngón tay
-        t.ve_net.line(t.q([(268 + i * 6, 972 + i * 14), (312 - i * 4, 992 + i * 11)]),
-                      fill=85, width=t.n(2), joint="curve")
-    t.toi(("da_giac", [(214, 960), (230, 958), (240, 1012), (222, 1010)]), 110)
-    t.sang(("da_giac", [(232, 962), (272, 964), (300, 986), (280, 996), (244, 978)]), 65)
+def lam_mem(a: np.ndarray, r: float, lan: int = 3) -> np.ndarray:
+    """Xấp xỉ làm mờ Gauss bằng ba lượt mờ hộp."""
+    if r <= 0:
+        return a
+    k = max(1, int(round(r / 1.6)))
+    for _ in range(lan):
+        a = _hop_mo(a, k)
+    return a
 
 
+def chuyen_muot(a, canh0, canh1):
+    t = np.clip((a - canh0) / max(1e-6, canh1 - canh0), 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)
+
+
+def _hat_nhieu(hat: int, r: float) -> np.ndarray:
+    """Nhiễu ngẫu nhiên đã làm mềm, dùng cho vân da và vân vải."""
+    rng = np.random.default_rng(hat)
+    return lam_mem(rng.random((CAO, RONG)).astype(np.float32), r) - 0.5
 
 
 # --------------------------------------------------------------------------
-VIEN_MAT = [
-    (432, 196), (468, 202), (496, 222), (513, 256), (518, 302), (512, 352),
-    (500, 400), (480, 440), (456, 466), (432, 478), (408, 466), (384, 440),
-    (364, 400), (352, 352), (346, 302), (351, 256), (368, 222), (396, 202),
+# Bộ dựng cảnh: độ cao, hệ số phản xạ, độ bóng
+# --------------------------------------------------------------------------
+class Canh:
+    def __init__(self):
+        self.z = np.zeros((CAO, RONG), np.float32)      # bản đồ độ cao
+        self.mau = np.full((CAO, RONG), 0.30, np.float32)   # hệ số phản xạ
+        self.bong = np.zeros((CAO, RONG), np.float32)   # độ bóng bề mặt
+        self.la_da = np.zeros((CAO, RONG), np.float32)  # vùng da, để tán xạ
+        self.tien_canh = np.zeros((CAO, RONG), np.float32)  # vùng nét (không nhoè)
+
+    # --- đắp khối ---
+    def doi(self, mat_na, r, cao, mu=0.55):
+        """Đắp một khối tròn lên bản đồ độ cao từ mặt nạ đã cho."""
+        self.z += _tr(cao) * np.power(np.clip(lam_mem(mat_na, _tr(r)), 0, 1), mu)
+
+    def khoet(self, mat_na, r, sau, mu=0.55):
+        self.doi(mat_na, r, -sau, mu)
+
+    def tru(self, mat_na, tam, ban_kinh, cao):
+        """Khối trụ đứng: dày nhất ở giữa, mỏng dần ra hai mép."""
+        h = np.clip(1.0 - ((X - _tx(tam)) / _tr(ban_kinh)) ** 2, 0, 1)
+        self.z += mat_na * _tr(cao) * np.sqrt(h)
+
+    def cau(self, mat_na, tam_x, tam_y, rx, ry, cao):
+        h = np.clip(1.0 - ((X - _tx(tam_x)) / _tr(rx)) ** 2
+                    - ((Y - _ty(tam_y)) / _tr(ry)) ** 2, 0, 1)
+        self.z += mat_na * _tr(cao) * np.sqrt(h)
+
+    # --- tô chất liệu ---
+    def to(self, mat_na, mau=None, bong=None, da=False, tien_canh=True):
+        m = np.clip(mat_na, 0, 1)
+        if mau is not None:
+            self.mau = self.mau * (1 - m) + np.asarray(mau, np.float32) * m
+        if bong is not None:
+            self.bong = self.bong * (1 - m) + bong * m
+        if da:
+            self.la_da = np.clip(self.la_da + m, 0, 1)
+        if tien_canh:
+            self.tien_canh = np.clip(self.tien_canh + m, 0, 1)
+
+    def nhan(self, mat_na, he_so):
+        """Nhân tối / làm sáng hệ số phản xạ trong một vùng."""
+        m = np.clip(mat_na, 0, 1)
+        self.mau = self.mau * (1 - m) + self.mau * he_so * m
+
+
+# --------------------------------------------------------------------------
+# 1. Hậu cảnh và bàn
+# --------------------------------------------------------------------------
+def dung_hau_canh(c: Canh) -> None:
+    doc = np.clip(Y / CAO, 0, 1)
+    c.mau = 0.44 - 0.19 * doc + 0.025 * _hat_nhieu(11, 26)
+    c.z += 2.0 * lam_mem(_hat_nhieu(12, 40), 20)
+
+
+
+def dung_ban(c: Canh) -> None:
+    """Bàn phủ khăn, vẽ sau thân người vì người đứng phía sau bàn."""
+    ban = mn_da_giac([(0, 1212), (RONG, 1196), (RONG, CAO), (0, CAO)])
+    c.to(ban, mau=0.10, bong=0.04, tien_canh=False)
+    c.z = c.z * (1 - ban) + ban * 30
+    c.doi(mn_duong([(0, 1212), (RONG, 1196)], 10), 7, 9)      # mép bàn bắt sáng
+    # Nếp khăn buông xuống.
+    nep = np.zeros((CAO, RONG), np.float32)
+    rng = np.random.default_rng(7)
+    for x in range(-20, RONG + 40, 52):
+        lech = int(rng.integers(-18, 18))
+        nep += mn_da_giac([(x, 1214), (x + 18, 1214), (x + 24 + lech, CAO), (x + lech, CAO)])
+    c.doi(np.clip(nep, 0, 1) * ban, 10, 9)
+    c.mau = np.where(ban > 0.5, c.mau * (1 + 0.45 * lam_mem(_hat_nhieu(13, 6), 3)), c.mau)
+
+
+# --------------------------------------------------------------------------
+# 2. Thân người trong áo kaki
+# --------------------------------------------------------------------------
+THAN = [
+    (44, 1340), (72, 1130), (110, 960), (180, 846), (296, 768), (410, 726),
+    (500, 714), (590, 726), (704, 768), (820, 846), (890, 960), (928, 1130),
+    (956, 1340),
 ]
 
 
-def ve_dau(t: BucTranh) -> None:
-    # Cổ, luôn nằm trong bóng của cằm.
-    t.da_giac([(404, 430), (460, 430), (470, 546), (394, 546)], MAU["da"])
-    t.toi(("da_giac", [(404, 430), (460, 430), (470, 546), (394, 546)]), 120)
-    t.toi(("da_giac", [(400, 432), (464, 432), (466, 486), (398, 486)]), 70)
-    # bóng cằm hắt xuống cổ
+def dung_than(c: Canh) -> None:
+    than = mn_da_giac(THAN)
+    c.to(than, mau=0.74, bong=0.04)
+    c.tru(than, 500, 430, 120)
+    c.doi(mn_bau_duc((330, 740, 670, 1040)), 46, 30)          # lồng ngực
+    c.doi(mn_bau_duc((120, 780, 380, 1240)) * than, 40, 20)   # khối vai trái
+    c.doi(mn_bau_duc((620, 780, 880, 1240)) * than, 40, 17)
 
-    # Tai.
-    for hop in ((338, 312, 358, 372), (506, 312, 526, 372)):
-        t.bau_duc(hop, MAU["da"])
-        t.toi(("bau_duc", (hop[0] + 5, hop[1] + 12, hop[2] - 5, hop[3] - 14)), 120)
+    # Vân vải và nếp nhăn.
+    van = lam_mem(_hat_nhieu(21, 9), 4) * than
+    c.z += van * 2.4
+    c.mau = c.mau * (1 + 0.03 * van * than)
+    nep = np.zeros((CAO, RONG), np.float32)
+    for a, b, d, e in ((214, 1050, 300, 1330), (300, 1110, 356, 1336),
+                       (760, 1030, 690, 1320), (830, 950, 762, 1210),
+                       (180, 860, 250, 1010), (820, 860, 750, 1010),
+                       (392, 1180, 430, 1336), (620, 1160, 590, 1330)):
+        nep += mn_duong([(a, b), ((a + d) / 2 + 10, (b + e) / 2), (d, e)], 10)
+    c.khoet(np.clip(nep, 0, 1) * than, 8, 10)
 
-    # Khuôn mặt gầy, xương gò má cao.
-    t.da_giac(VIEN_MAT, MAU["da"])
-    _vien(t, VIEN_MAT, dam=120, day=7)
-    t.toi(("da_giac", [(346, 302), (355, 250), (372, 226), (380, 300), (386, 396),
-                       (406, 452), (380, 434), (356, 370)]), 145)   # nửa mặt trong bóng
-    t.toi(("da_giac", [(518, 302), (511, 252), (496, 230), (490, 312), (484, 400),
-                       (462, 458), (488, 434), (510, 366)]), 120)
-    t.toi(("da_giac", [(382, 438), (432, 462), (482, 438), (472, 458), (432, 476),
-                       (392, 458)]), 90)                            # bóng dưới hàm
-    t.sang(("da_giac", [(402, 240), (462, 240), (472, 300), (460, 356), (432, 370),
-                        (404, 356), (392, 300)]), 105)              # trán, sống mũi
-    t.sang(("bau_duc", (386, 340, 430, 386)), 60)                   # gò má trái đón sáng
+    # Rãnh nách chạy từ vai xuống, tách tay áo khỏi thân.
+    for diem in ([(268, 810), (238, 1010), (250, 1340)], [(732, 810), (762, 1010), (750, 1340)]):
+        c.khoet(mn_duong(diem, 15) * than, 11, 17)
 
-    # Tóc thưa chải ngược để lộ vầng trán cao.
-    toc = [(366, 230), (396, 202), (432, 194), (468, 202), (498, 228), (512, 260),
-           (517, 302), (503, 290), (494, 250), (466, 232), (432, 228), (398, 234),
-           (370, 254), (355, 296), (347, 302), (353, 258)]
-    t.da_giac(toc, MAU["toc"])
-    t.toi(("da_giac", toc), 200)
-    # Vài sợi tóc lơ thơ ở chân tóc cho bớt cứng.
-    for _ in range(40):
-        x0 = random.uniform(360, 504)
-        lech = abs(x0 - 432) / 84.0
-        y0 = 228 + lech * 26
-        t.ve_net.line(t.q([(x0, y0), (x0 + random.uniform(-3, 3), y0 + random.uniform(3, 11))]),
-                      fill=random.randint(60, 150), width=t.n(1))
-    for i in range(22):
-        x0 = 362 + i * 6.6
-        lech = abs(x0 - 432) / 84.0
-        t.sang(("da_giac", [(x0, 222 + lech * 26), (x0 + 2, 222 + lech * 26),
-                            (x0 + (x0 - 432) * 0.08 + 2, 206 + lech * 30),
-                            (x0 + (x0 - 432) * 0.08, 206 + lech * 30)]), 55)
-    t.toi(("bau_duc", (342, 250, 380, 330)), 120)   # tóc mai
-    t.toi(("bau_duc", (484, 250, 522, 330)), 110)
+    # Nẹp áo và hàng cúc.
+    nep_ao = mn_da_giac([(472, 748), (520, 754), (536, 1340), (480, 1340)])
+    c.to(nep_ao, mau=0.66)
+    c.doi(nep_ao, 7, 10)
+    c.khoet(mn_duong([(478, 754), (490, 1340)], 5), 4, 8)
+    for y in (880, 1000, 1120, 1240):
+        cuc = mn_bau_duc((494, y - 13, 522, y + 13))
+        c.to(cuc, mau=0.55, bong=0.16)
+        c.cau(cuc, 508, y, 15, 15, 11)
+        c.khoet(mn_bau_duc((490, y + 10, 526, y + 22)), 6, 6)
 
-    # Nếp nhăn trán và lông mày.
-    t.ve_net.line(t.q([(392, 270), (432, 266), (472, 270)]), fill=60,
-                  width=t.n(2), joint="curve")
-    t.ve_net.line(t.q([(398, 284), (432, 281), (466, 284)]), fill=48,
-                  width=t.n(2), joint="curve")
-    for diem in ([(378, 304), (398, 295), (420, 300)], [(446, 300), (468, 295), (488, 304)]):
-        t.ve_net.line(t.q(diem), fill=165, width=t.n(3), joint="curve")
+    # Cổ áo: bản cổ ôm quanh gáy, hai ve chạy chéo xuống ngực.
+    ban_co = mn_da_giac([(408, 742), (452, 700), (548, 700), (592, 742), (598, 790),
+                         (548, 748), (452, 748), (402, 790)])
+    ve_ao = mn_da_giac([(402, 782), (452, 744), (500, 812), (548, 744), (598, 782),
+                        (586, 900), (500, 862), (414, 900)])
+    c.to(ban_co, mau=0.72)
+    c.to(ve_ao, mau=0.76)
+    c.doi(ban_co, 10, 20)
+    c.doi(ve_ao, 12, 14)
+    c.khoet(mn_duong([(452, 744), (500, 812), (548, 744)], 5), 4, 16)     # khe cổ áo
+    c.khoet(mn_duong([(402, 782), (452, 744)], 5), 4, 10)
+    c.khoet(mn_duong([(598, 782), (548, 744)], 5), 4, 10)
+    c.khoet(mn_duong([(414, 898), (500, 860), (586, 898)], 6), 5, 12)     # mép ve áo
+    # Bóng cổ áo hắt lên cổ.
+    c.nhan(lam_mem(mn_da_giac([(452, 700), (548, 700), (548, 742), (452, 742)]), 10) * 0.8,
+           0.6)
 
-    # Mắt hơi nhìn xuống trang giấy, hốc mắt sâu.
-    for cx, ng in ((398, -1), (468, 1)):
-        t.toi(("bau_duc", (cx - 30, 302, cx + 30, 344)), 120)       # hốc mắt sâu
-        mi = [(cx - 18, 321), (cx - 7, 315), (cx + 7, 315), (cx + 18, 321),
-              (cx + 6, 329), (cx - 6, 329)]
-        t.da_giac(mi, (192, 184, 170))
-        t.bau_duc((cx - 5 + ng, 318, cx + 6 + ng, 329), MAU["mat"])
-        t.toi(("da_giac", mi), 70, net=True)
-        t.ve_net.line(t.q([(cx - 19, 320), (cx - 7, 314), (cx + 7, 314), (cx + 19, 320)]),
-                      fill=190, width=t.n(3), joint="curve")        # mí trên trĩu xuống
-        t.da_giac([(cx - 20, 310), (cx - 7, 305), (cx + 8, 306), (cx + 20, 313),
-                   (cx + 18, 318), (cx - 18, 316)], MAU["da"])      # nếp mí
-        t.ve_net.line(t.q([(cx - 16, 334), (cx, 336), (cx + 16, 333)]),
-                      fill=75, width=t.n(2), joint="curve")         # bọng mắt
-
-    # Mũi dài, sống mũi đón sáng.
-    t.toi(("da_giac", [(421, 304), (431, 304), (438, 366), (426, 376), (412, 364)]), 85)
-    t.sang(("da_giac", [(429, 302), (438, 302), (440, 358), (430, 358)]), 100)
-    t.toi(("bau_duc", (414, 366, 424, 376)), 95, net=True)
-    t.toi(("bau_duc", (441, 366, 451, 376)), 95, net=True)
-    t.sang(("bau_duc", (426, 356, 442, 372)), 60)                   # đầu mũi đón sáng
-    t.ve_net.line(t.q([(418, 378), (432, 381), (446, 378)]), fill=120,
-                  width=t.n(2), joint="curve")                      # chân mũi
-
-    # Má hóp và nếp pháp lệnh.
-    t.toi(("bau_duc", (360, 346, 404, 418)), 135)
-    t.toi(("bau_duc", (460, 346, 504, 418)), 125)
-    t.ve_net.line(t.q([(410, 382), (405, 398), (404, 414)]), fill=60,
-                  width=t.n(2), joint="curve")
-    t.ve_net.line(t.q([(454, 382), (459, 398), (460, 414)]), fill=52,
-                  width=t.n(2), joint="curve")
-
-    # Ria mép thưa và miệng đang nói.
-    t.da_giac([(406, 394), (432, 388), (458, 394), (460, 404), (432, 398), (404, 404)],
-              MAU["rau"])
-    t.toi(("da_giac", [(406, 394), (432, 388), (458, 394), (460, 404), (432, 398),
-                       (404, 404)]), 85)
-    t.ve_net.line(t.q([(412, 410), (432, 414), (452, 409)]), fill=150,
-                  width=t.n(3), joint="curve")                       # khe môi hé mở
-    t.toi(("da_giac", [(414, 412), (432, 416), (450, 411), (446, 421), (432, 424),
-                       (418, 421)]), 70, net=True)                   # môi dưới
-    t.sang(("da_giac", [(416, 424), (448, 424), (442, 432), (422, 432)]), 45)
-
-
-def ve_chom_rau(t: BucTranh) -> None:
-    """Chòm râu buông xuống, vẽ sau cùng để phủ lên cổ áo."""
-    rau = [(418, 448), (432, 444), (446, 448), (443, 492), (433, 540), (423, 492)]
-    t.toi(("da_giac", rau), 85)
-    for _ in range(70):
-        x0 = random.uniform(417, 447)
-        dai = random.uniform(40, 96)
-        cong = (x0 - 432) * 0.45 + random.uniform(-4, 4)
-        t.ve_net.line(t.q([(x0, 446), (x0 + cong * 0.4, 446 + dai * 0.6),
-                           (432 + cong, 446 + dai)]),
-                      fill=random.randint(70, 130), width=t.n(1), joint="curve")
-    t.sang(("da_giac", [(426, 452), (438, 452), (436, 500), (429, 500)]), 40)
+    # Hai túi ngực có nắp.
+    for x0, x1 in ((286, 442), (558, 714)):
+        tui = mn_da_giac([(x0, 946), (x1, 934), (x1 + 6, 1082), (x0 + 2, 1094)])
+        c.doi(tui, 8, 7)
+        c.khoet(mn_duong([(x0, 946), (x1, 934), (x1 + 6, 1082), (x0 + 2, 1094)], 5, kin=True),
+                4, 9)
+        nap = mn_da_giac([(x0 - 8, 932), (x1 + 8, 920), (x1 + 10, 970), (x0 - 6, 982)])
+        c.doi(nap, 7, 12)
+        c.khoet(mn_duong([(x0 - 6, 980), (x1 + 10, 968)], 6), 5, 11)
 
 
 # --------------------------------------------------------------------------
-# 5. Chiếc micro trước mặt
+# 3. Đầu: hộp sọ, ngũ quan, tóc và râu
 # --------------------------------------------------------------------------
-def ve_micro(t: BucTranh) -> None:
-    # Lưới micro.
-    hop = (556, 470, 664, 632)
-    t.ve.rounded_rectangle(t.h(hop), radius=t.n(54), fill=MAU["kim_loai"])
-    for y in range(482, 626, 11):
-        r = 52 * math.sqrt(max(0.0, 1 - ((y - 551) / 84.0) ** 2))
-        t.duong([(610 - r, y), (610 + r, y)], MAU["kim_loai_sang"], day=1)
-    for x in range(566, 660, 12):
-        h = 80 * math.sqrt(max(0.0, 1 - ((x - 610) / 56.0) ** 2))
-        t.duong([(x, 551 - h), (x, 551 + h)], (108, 105, 100), day=1)
-    t.sang(("bau_duc", (570, 492, 604, 606)), 110)
-    t.toi(("bau_duc", (632, 486, 668, 620)), 140)
+VIEN_MAT = [
+    (500, 212), (540, 218), (570, 238), (590, 272), (598, 320), (596, 374),
+    (588, 426), (572, 474), (550, 516), (524, 546), (500, 556), (476, 546),
+    (450, 516), (428, 474), (412, 426), (404, 374), (402, 320), (410, 272),
+    (430, 238), (460, 218),
+]
+MAT_TRAI, MAT_PHAI = 457, 545        # tâm hai mắt
+MAT_Y = 374
 
-    # Vòng đai, thân micro và chân đế.
-    t.ve.rounded_rectangle(t.h((558, 628, 662, 658)), radius=t.n(12), fill=MAU["kim_loai"])
-    t.sang(("da_giac", [(566, 634), (600, 634), (600, 652), (566, 652)]), 110)
-    t.da_giac([(582, 658), (638, 658), (626, 742), (594, 742)], MAU["kim_loai"])
-    t.da_giac([(598, 742), (622, 742), (626, 992), (594, 992)], MAU["kim_loai"])
-    t.sang(("da_giac", [(602, 668), (610, 668), (606, 986), (600, 986)]), 120)
-    t.bau_duc((548, 972, 672, 1022), MAU["kim_loai"])
-    t.sang(("bau_duc", (566, 980, 640, 998)), 80)
-    t.toi(("bau_duc", (540, 1000, 690, 1034)), 170, net=True)   # bóng đổ trên mặt bàn
+
+def _mem_hoa(mat_na, r):
+    """Bờ mặt nạ được vuốt mềm để khối không bị cắt vát như giấy dán."""
+    return np.clip(lam_mem(mat_na, r) * 1.15, 0, 1)
+
+
+def dung_dau(c: Canh) -> None:
+    mat = mn_da_giac(VIEN_MAT)
+    co = mn_da_giac([(464, 516), (536, 516), (550, 668), (450, 668)])
+
+    # Cổ: khối trụ nằm sâu trong bóng cằm.
+    c.to(co, mau=0.30, da=True)
+    c.tru(_mem_hoa(co, 5), 500, 58, 46)
+    c.nhan(co * np.clip(1.6 - np.abs(Y - _ty(560)) / _tr(70), 0, 1) * 0.75, 0.55)
+
+    # Hộp sọ và khuôn mặt. Vòm đầu dùng mặt nạ đã vuốt mềm nên rìa mặt
+    # chuyển dần vào hậu cảnh thay vì gãy thành nét cắt.
+    c.to(mat, mau=0.42, bong=0.09, da=True)
+    c.cau(_mem_hoa(mat, 7), 500, 384, 116, 188, 108)
+    c.doi(mn_bau_duc((428, 236, 572, 356)), 32, 22)       # trán
+    c.doi(mn_bau_duc((420, 300, 580, 396)), 24, 7)        # ụ mày
+    c.khoet(mn_bau_duc((424, 250, 576, 296)), 15, 4)
+
+    # Gò má cao, má hóp, hàm gầy.
+    for x in (452, 548):
+        c.doi(mn_bau_duc((x - 44, 394, x + 44, 452)), 20, 13)
+        c.khoet(mn_bau_duc((x - 38, 450, x + 38, 522)), 22, 12)
+    c.doi(mn_bau_duc((466, 494, 534, 552)), 18, 12)       # cằm
+    c.khoet(mn_bau_duc((472, 478, 528, 504)), 12, 5)
+
+    # --- hốc mắt, nhãn cầu, mí ---
+    for x, lech in ((MAT_TRAI, -2), (MAT_PHAI, -2)):
+        c.khoet(mn_bau_duc((x - 40, MAT_Y - 28, x + 40, MAT_Y + 24)), 18, 9)
+        c.cau(mn_bau_duc((x - 24, MAT_Y - 18, x + 24, MAT_Y + 18)), x, MAT_Y, 24, 18, 9)
+
+        # Khe mắt hẹp, mí trên trĩu xuống che gần nửa tròng đen.
+        khe = mn_da_giac([(x - 22, MAT_Y + 1), (x - 11, MAT_Y - 8), (x + 10, MAT_Y - 8),
+                          (x + 22, MAT_Y + 1), (x + 9, MAT_Y + 10), (x - 10, MAT_Y + 10)])
+        c.to(khe, mau=0.52, bong=0.45)
+        trong = mn_bau_duc((x - 11 + lech, MAT_Y - 12, x + 11 + lech, MAT_Y + 12)) * khe
+        c.to(trong, mau=0.075, bong=0.8)
+        c.to(mn_bau_duc((x - 4 + lech, MAT_Y - 4, x + 5 + lech, MAT_Y + 5)) * khe,
+             mau=0.03, bong=0.85)
+        # Mí trên đổ bóng xuống nhãn cầu.
+        c.nhan(mn_da_giac([(x - 22, MAT_Y - 1), (x - 10, MAT_Y - 9), (x + 10, MAT_Y - 9),
+                           (x + 22, MAT_Y - 1), (x + 18, MAT_Y + 3), (x - 18, MAT_Y + 3)]), 0.4)
+        # Gờ mí trên và nếp mí.
+        c.doi(mn_da_giac([(x - 26, MAT_Y - 6), (x - 11, MAT_Y - 16), (x + 11, MAT_Y - 16),
+                          (x + 26, MAT_Y - 6), (x + 24, MAT_Y + 1), (x - 24, MAT_Y + 1)]),
+              6, 4)
+        c.khoet(mn_duong([(x - 24, MAT_Y - 8), (x, MAT_Y - 17), (x + 24, MAT_Y - 7)], 2.5),
+                2, 6)
+        c.doi(mn_da_giac([(x - 22, MAT_Y + 8), (x, MAT_Y + 12), (x + 22, MAT_Y + 7),
+                          (x + 18, MAT_Y + 20), (x - 18, MAT_Y + 21)]), 6, 5)   # bọng mắt
+        c.khoet(mn_duong([(x - 20, MAT_Y + 14), (x, MAT_Y + 17), (x + 20, MAT_Y + 13)], 2.5),
+                2, 4)
+
+    # --- mũi ---
+    c.doi(mn_da_giac([(489, 330), (511, 330), (518, 438), (482, 438)]), 13, 16)
+    c.cau(mn_bau_duc((484, 430, 518, 462)), 501, 446, 18, 17, 10)      # đầu mũi
+    for x in (480, 522):
+        c.cau(mn_bau_duc((x - 13, 434, x + 13, 460)), x, 447, 13, 13, 5)
+        c.khoet(mn_bau_duc((x - 6, 446, x + 6, 458)), 3, 8)            # lỗ mũi
+    c.khoet(mn_duong([(476, 462), (500, 468), (526, 462)], 4), 3, 5)
+    c.nhan(mn_bau_duc((470, 424, 532, 470)) * 0.35, 0.9)
+
+    # --- miệng đang nói ---
+    c.doi(mn_da_giac([(470, 486), (500, 480), (530, 486), (526, 498), (500, 494),
+                      (474, 498)]), 6, 8)                              # môi trên
+    c.doi(mn_bau_duc((474, 498, 526, 520)), 8, 11)                     # môi dưới
+    khe_mieng = mn_duong([(472, 492), (500, 497), (528, 491)], 6)
+    c.khoet(khe_mieng, 3, 15)
+    c.to(khe_mieng * 0.9, mau=0.13)
+    c.nhan(mn_bau_duc((468, 484, 532, 526)) * 0.5, 0.92)
+
+    # --- nếp nhăn ---
+    for diem in ([(450, 288), (500, 282), (550, 288)], [(456, 308), (500, 303), (544, 308)],
+                 [(462, 326), (500, 322), (538, 326)]):
+        c.khoet(mn_duong(diem, 3.5), 2.5, 4)
+    for x, h in ((MAT_TRAI, -1), (MAT_PHAI, 1)):
+        for i in range(3):
+            c.khoet(mn_duong([(x + h * 32, MAT_Y - 6 + i * 8),
+                              (x + h * 46, MAT_Y - 15 + i * 11)], 2.5), 2, 3)
+    c.khoet(mn_duong([(476, 452), (464, 484), (462, 508)], 4), 3.5, 6)   # nếp pháp lệnh
+    c.khoet(mn_duong([(526, 452), (538, 484), (540, 508)], 4), 3.5, 6)
+
+    # --- tai ---
+    for x in (408, 592):
+        tai = mn_bau_duc((x - 13, 348, x + 13, 412))
+        c.to(tai, mau=0.38, da=True)
+        c.doi(_mem_hoa(tai, 3), 9, 18)
+        c.khoet(mn_bau_duc((x - 6, 362, x + 6, 400)), 6, 10)
+
+    # Sắc độ tự nhiên của da: trán và sống mũi sáng, thái dương và quanh hàm
+    # sẫm hơn, nhờ vậy khuôn mặt không phẳng như một mảng màu.
+    c.nhan(np.clip(lam_mem(mn_bau_duc((398, 300, 602, 570)), 26)
+                   - lam_mem(mn_bau_duc((440, 250, 560, 470)), 30), 0, 1) * 0.55, 0.84)
+    c.nhan(mn_bau_duc((404, 480, 596, 580)) * 0.5, 0.9)
+    c.mau = c.mau * (1 + 0.10 * lam_mem(mn_bau_duc((440, 240, 560, 360)), 30))
+
+    # --- chất da ---
+    da = np.clip(mat + co, 0, 1)
+    c.mau = np.where(da > 0.5, c.mau * (1 + 0.055 * lam_mem(_hat_nhieu(31, 3), 1.5)), c.mau)
+    c.z += da * lam_mem(_hat_nhieu(32, 2), 1) * 2.2
+
+    # --- lông mày thưa ---
+    rng = np.random.default_rng(41)
+    soi = np.zeros((CAO, RONG), np.float32)
+    for _ in range(260):
+        ben = rng.choice([-1, 1])
+        d = rng.uniform(16, 62)
+        x0 = 500 + ben * d
+        y0 = 316 - (d - 16) * 0.10 + rng.uniform(-4, 4)
+        soi += mn_duong([(x0, y0), (x0 + ben * rng.uniform(5, 13), y0 - rng.uniform(1, 5))],
+                        rng.uniform(1.2, 2.0))
+    soi = np.clip(soi, 0, 1)
+    c.mau = c.mau * (1 - soi * 0.72) + 0.10 * soi * 0.72
+    c.doi(soi * 0.8, 3, 3)
+
+    # --- tóc thưa chải ngược, để lộ vầng trán cao ---
+    toc = mn_da_giac([
+        (500, 202), (546, 208), (578, 230), (596, 264), (604, 322), (590, 320),
+        (578, 268), (548, 244), (500, 238), (452, 244), (422, 268), (410, 320),
+        (396, 322), (404, 264), (422, 230), (454, 208),
+    ])
+    toc = np.clip(toc + mn_bau_duc((398, 196, 602, 300)) * mn_da_giac(
+        [(396, 196), (604, 196), (604, 252), (500, 236), (396, 252)]), 0, 1)
+    toc = _mem_hoa(toc, 5)
+    c.to(toc, mau=0.085, bong=0.16)
+    c.doi(toc, 10, 5)
+    rng = np.random.default_rng(43)
+    soi = np.zeros((CAO, RONG), np.float32)
+    for _ in range(700):
+        goc = rng.uniform(-1.4, 1.4)
+        r0 = rng.uniform(94, 112)
+        x0 = 500 + np.sin(goc) * r0
+        y0 = 384 - np.cos(goc) * (r0 * 1.62)
+        x1 = 500 + np.sin(goc * 1.07) * (r0 - rng.uniform(5, 24))
+        y1 = 384 - np.cos(goc * 1.07) * (r0 * 1.62 - rng.uniform(3, 18))
+        soi += mn_duong([(x0, y0), ((x0 + x1) / 2 + rng.uniform(-2.5, 2.5), (y0 + y1) / 2),
+                         (x1, y1)], rng.uniform(1.0, 2.2))
+    soi = np.clip(soi, 0, 1) * toc
+    c.mau = c.mau * (1 - soi * 0.85) + np.clip(c.mau * 2.6, 0, 0.22) * soi * 0.85
+    c.z += soi * 1.6
+
+    # --- ria mép mỏng ---
+    ria = mn_da_giac([(474, 470), (500, 464), (526, 470), (528, 484), (500, 477),
+                      (472, 484)])
+    c.to(_mem_hoa(ria, 3) * 0.9, mau=0.20)
+    c.doi(ria, 5, 4)
+    rng = np.random.default_rng(45)
+    soi = np.zeros((CAO, RONG), np.float32)
+    for _ in range(260):
+        x0 = rng.uniform(474, 526)
+        y0 = rng.uniform(466, 474)
+        soi += mn_duong([(x0, y0), (x0 + (x0 - 500) * 0.14, y0 + rng.uniform(7, 15))], 1.3)
+    soi = np.clip(soi, 0, 1) * np.clip(lam_mem(ria, 4) * 1.6, 0, 1)
+    c.mau = c.mau * (1 - soi) + 0.30 * soi
+
+
+def dung_chom_rau(c: Canh) -> None:
+    """Chòm râu buông xuống trước ngực, vẽ sau thân áo để phủ lên cổ áo."""
+    rau = mn_da_giac([(480, 522), (500, 516), (520, 522), (517, 610), (501, 706),
+                      (485, 610)])
+    rau = np.clip(rau + mn_bau_duc((478, 512, 524, 560)), 0, 1)
+    c.to(rau, mau=0.19, bong=0.10)
+    c.doi(_mem_hoa(rau, 3), 8, 14)
+
+    rng = np.random.default_rng(51)
+    soi = np.zeros((CAO, RONG), np.float32)
+    for _ in range(760):
+        x0 = 500 + rng.uniform(-19, 19)
+        dai = rng.uniform(44, 190)
+        cong = (x0 - 500) * 0.55 + rng.uniform(-5, 5)
+        soi += mn_duong([(x0, 524), (x0 + cong * 0.4, 524 + dai * 0.55),
+                         (500 + cong, 524 + dai)], rng.uniform(1.0, 2.0))
+    soi = np.clip(soi, 0, 1) * np.clip(rau + lam_mem(rau, 16) * 1.8, 0, 1)
+    c.mau = c.mau * (1 - soi) + 0.34 * soi
+    c.z += soi * 2.6
+    c.to(soi * 0.85, bong=0.12, tien_canh=True)
+
+
+# --------------------------------------------------------------------------
+# 4. Bản Tuyên ngôn, bàn tay và micro
+# --------------------------------------------------------------------------
+def dung_ban_thao(c: Canh) -> None:
+    giay = mn_da_giac([(404, 1200), (700, 1178), (748, 1252), (446, 1282)])
+    c.to(giay, mau=0.84, bong=0.08)
+    c.doi(giay, 5, 6)
+    rng = np.random.default_rng(61)
+    chu = np.zeros((CAO, RONG), np.float32)
+    for i in range(10):
+        y = 1200 + i * 8
+        chu += mn_duong([(422 + i, y + 5), (422 + i + int(rng.integers(150, 262)), y - 16 + i)],
+                        1.8)
+    c.mau = c.mau * (1 - np.clip(chu, 0, 1) * giay * 0.5)
+    c.khoet(mn_duong([(404, 1200), (446, 1282)], 5), 4, 5)
+
+
+def dung_ban_tay(c: Canh) -> None:
+    tay = mn_da_giac([(276, 1148), (338, 1140), (392, 1172), (406, 1208), (384, 1234),
+                      (314, 1240), (276, 1210)])
+    tay = np.clip(tay + mn_bau_duc((262, 1136, 356, 1226)), 0, 1)
+    c.to(tay, mau=0.46, bong=0.09, da=True)
+    c.doi(tay, 15, 36)
+    for i in range(3):                       # kẽ ngón tay
+        c.khoet(mn_duong([(344 + i * 9, 1160 + i * 19), (400 - i * 6, 1186 + i * 15)], 5),
+                4, 8)
+    c.doi(mn_bau_duc((260, 1132, 328, 1188)), 14, 12)     # gốc ngón cái
+    c.khoet(mn_duong([(276, 1134), (270, 1180), (282, 1220)], 7), 6, 8)   # cổ tay
+
+
+def dung_micro(c: Canh) -> None:
+    luoi = mn_chu_nhat_tron((742, 706, 898, 942), 76)
+    c.to(luoi, mau=0.24, bong=0.5)
+    c.tru(luoi, 820, 82, 74)
+    # Mắt lưới kim loại.
+    mesh = np.zeros((CAO, RONG), np.float32)
+    for yy in range(710, 942, 8):
+        mesh += mn_duong([(742, yy), (898, yy)], 1.6)
+    for xx in range(746, 898, 8):
+        mesh += mn_duong([(xx, 706), (xx, 942)], 1.6)
+    mesh = np.clip(mesh, 0, 1) * luoi
+    c.mau = c.mau * (1 - mesh * 0.5)
+    c.z -= mesh * 2.4
+
+    vong = mn_chu_nhat_tron((734, 936, 906, 990), 18)
+    c.to(vong, mau=0.28, bong=0.55)
+    c.tru(vong, 820, 88, 32)
+
+    than = mn_da_giac([(778, 986), (862, 986), (844, 1080), (798, 1080)])
+    c.to(than, mau=0.26, bong=0.45)
+    c.tru(than, 820, 44, 30)
+
+    coc = mn_da_giac([(802, 1078), (838, 1078), (842, 1214), (798, 1214)])
+    c.to(coc, mau=0.24, bong=0.5)
+    c.tru(coc, 820, 22, 22)
+
+    de = mn_bau_duc((730, 1180, 912, 1246))
+    c.to(de, mau=0.20, bong=0.4)
+    c.cau(de, 821, 1213, 91, 33, 30)
+
+
+# --------------------------------------------------------------------------
+# 5. Chiếu sáng
+# --------------------------------------------------------------------------
+def chieu_sang(c: Canh) -> np.ndarray:
+    zx, zy = np.gradient(lam_mem(c.z, 2.6))
+    doc = 0.62                      # hạ độ dốc pháp tuyến cho khối mượt
+    nx, ny, nz = -zy * doc, -zx * doc, np.ones_like(c.z) * 1.0
+    do_dai = np.sqrt(nx * nx + ny * ny + nz * nz)
+    nx, ny, nz = nx / do_dai, ny / do_dai, nz / do_dai
+
+    def chuan(v):
+        v = np.asarray(v, np.float32)
+        return v / np.linalg.norm(v)
+
+    chinh = chuan((-0.42, -0.46, 0.78))     # đèn chính chếch từ trái phía trên
+    phu = chuan((0.66, -0.12, 0.55))        # đèn phụ bên phải, yếu
+    mat = chuan((0.0, 0.0, 1.0))
+
+    d_chinh = nx * chinh[0] + ny * chinh[1] + nz * chinh[2]
+    d_phu = nx * phu[0] + ny * phu[1] + nz * phu[2]
+
+    # Ánh sáng "quấn" quanh khối, mô phỏng nguồn sáng toả rộng ngoài trời.
+    khuech = np.clip((d_chinh + 0.24) / 1.24, 0, 1) ** 1.30
+    khuech = 0.95 * khuech + 0.22 * np.clip(d_phu, 0, 1)
+    moi_truong = 0.21 + 0.09 * np.clip(nz, 0, 1)
+
+    # Tán xạ dưới da: mượt hoá ánh sáng trên vùng da.
+    mem = lam_mem(khuech, 9)
+    khuech = np.where(c.la_da > 0.4, khuech * 0.55 + mem * 0.45, khuech)
+
+    sang = c.mau * (moi_truong + khuech)
+
+    # Phản xạ bóng.
+    hx, hy, hz = chinh[0] + mat[0], chinh[1] + mat[1], chinh[2] + mat[2]
+    hd = np.sqrt(hx * hx + hy * hy + hz * hz)
+    tia = np.clip(nx * hx / hd + ny * hy / hd + nz * hz / hd, 0, 1)
+    sang += c.bong * np.power(tia, 34) * 1.25
+
+    # Bóng bản thân: vùng lõm sâu thì tối thêm.
+    lom = np.clip(lam_mem(c.z, 26) - c.z, 0, None)
+    sang *= 1.0 - 0.16 * chuyen_muot(lom, 2.0, 26.0)
+
+    # Bóng người hắt lên phông và bóng đổ trên mặt bàn.
+    nguoi = chuyen_muot(c.tien_canh, 0.2, 0.8)
+    bong_do = np.roll(np.roll(lam_mem(nguoi, 26), 26, axis=1), 18, axis=0)
+    sang *= 1.0 - 0.30 * np.clip(bong_do - nguoi, 0, 1)
+    return sang
 
 
 # --------------------------------------------------------------------------
 # 6. Hiệu ứng ảnh chụp năm 1945
 # --------------------------------------------------------------------------
-def hieu_ung_anh_cu(anh: Image.Image, che_do: str = "sepia", hat: float = 1.0) -> Image.Image:
-    anh = anh.filter(ImageFilter.GaussianBlur(0.7))
+def thanh_anh(sang: np.ndarray, tien_canh: np.ndarray, che_do: str,
+              hat: float, hat_giong: int) -> Image.Image:
+    v = np.clip(sang, 0, None)
+    v = v / (1.0 + v * 0.55)                       # nén vùng sáng như phim
+    v = np.clip(v * 1.30, 0, 1) ** 1.04
 
-    if che_do in ("sepia", "xam"):
-        xam = anh.convert("L")
-        # Uốn nhẹ đường tông màu cho giống phim đen trắng thời đó:
-        # vùng sáng không bị cháy, vùng tối vẫn còn chi tiết.
-        xam = xam.point(lambda v: int(255 * (v / 255.0) ** 1.12))
-        if che_do == "sepia":
-            anh = ImageOps.colorize(xam, black=(42, 32, 22), white=(247, 240, 224),
-                                    mid=(150, 130, 100))
-        else:
-            anh = xam.convert("RGB")
+    # Hậu cảnh nhoè hơn tiền cảnh: độ sâu trường ảnh của ống kính thời đó.
+    net = chuyen_muot(lam_mem(tien_canh, 3), 0.25, 0.75)
+    v = v * net + lam_mem(v, 7) * (1 - net)
+    # Ảnh chụp luôn mềm hơn nét vẽ một chút.
+    v = 0.72 * v + 0.28 * lam_mem(v, 1.6)
+    # Làm nét cục bộ (unsharp mask) cho ngũ quan bật lên.
+    v = np.clip(v + 0.55 * (v - lam_mem(v, 3.2)) * net, 0, 1)
 
     # Tối bốn góc.
-    vignette = Image.new("L", anh.size, 0)
-    ImageDraw.Draw(vignette).ellipse(
-        (-int(RONG * 0.30), -int(CAO * 0.18),
-         int(RONG * 1.30), int(CAO * 1.18)), fill=255)
-    vignette = vignette.filter(ImageFilter.GaussianBlur(120))
-    anh = Image.composite(anh, Image.new("RGB", anh.size, (26, 20, 14)), vignette)
+    r = np.sqrt(((X - RONG / 2) / (RONG * 0.72)) ** 2 + ((Y - CAO / 2) / (CAO * 0.74)) ** 2)
+    v *= np.clip(1.06 - 0.62 * r ** 2.4, 0, 1)
 
-    # Hạt phim.
     if hat > 0:
-        nhieu = Image.effect_noise(anh.size, 22 * hat).convert("L")
-        anh = Image.blend(anh, Image.merge("RGB", (nhieu, nhieu, nhieu)), 0.075 * hat)
-        # Vài vết xước dọc của bản in cũ.
-        ve = ImageDraw.Draw(anh)
-        for _ in range(int(3 * hat)):
-            x = random.choice([random.randint(20, 300), random.randint(700, 880)])
-            y0 = random.randint(0, anh.size[1] - 160)
-            ve.line([(x, y0), (x + random.randint(-3, 3), y0 + random.randint(70, 220))],
-                    fill=(186, 178, 164), width=1)
+        rng = np.random.default_rng(hat_giong)
+        nhieu = rng.normal(0, 1, (CAO, RONG)).astype(np.float32)
+        nhieu = lam_mem(nhieu, 1.0) * 3.4
+        # Hạt bạc nổi rõ ở vùng trung gian, mờ ở vùng sáng và tối.
+        v = np.clip(v + nhieu * hat * 0.019 * (v * (1 - v) * 4) ** 0.7, 0, 1)
 
-    # Khung viền kiểu ảnh in tráng thủ công.
-    anh = ImageOps.expand(anh, border=18, fill=(238, 232, 216))
-    anh = ImageOps.expand(anh, border=2, fill=(122, 112, 96))
+    x = np.clip(v * 255, 0, 255).astype(np.uint8)
+    anh = Image.fromarray(x, mode="L")
+    if che_do == "sepia":
+        anh = ImageOps.colorize(anh, black=(38, 28, 20), white=(248, 242, 228),
+                                mid=(146, 124, 96))
+    else:
+        anh = anh.convert("RGB")
+
+    if hat > 0:                                    # vài vết xước của bản in cũ
+        ve = ImageDraw.Draw(anh)
+        rng = np.random.default_rng(hat_giong + 1)
+        for _ in range(int(2 * hat)):
+            xx = int(rng.choice([rng.integers(24, 200), rng.integers(940, 986)]))
+            yy = int(rng.integers(0, CAO - 220))
+            ve.line([(xx, yy), (xx + int(rng.integers(-3, 3)), yy + int(rng.integers(90, 240)))],
+                    fill=(178, 170, 158), width=1)
+
+    anh = ImageOps.expand(anh, border=20, fill=(240, 234, 218))
+    anh = ImageOps.expand(anh, border=2, fill=(120, 110, 94))
     return anh
 
 
 def ghi_chu_thich(anh: Image.Image) -> Image.Image:
     """Thêm dòng chú thích dưới ảnh (bỏ qua nếu máy không có phông chữ)."""
-    dong = [
-        "Chủ tịch Hồ Chí Minh đọc Tuyên ngôn Độc lập",
-        "Quảng trường Ba Đình, ngày 2 tháng 9 năm 1945",
-    ]
-    duong_dan = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/Library/Fonts/Arial Unicode.ttf",
-        "C:/Windows/Fonts/times.ttf",
-    ]
-    phong = None
-    for d in duong_dan:
+    dong = ["Chủ tịch Hồ Chí Minh đọc Tuyên ngôn Độc lập",
+            "Quảng trường Ba Đình, ngày 2 tháng 9 năm 1945"]
+    for d in ("/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+              "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+              "/Library/Fonts/Arial Unicode.ttf", "C:/Windows/Fonts/times.ttf"):
         if os.path.exists(d):
-            phong = ImageFont.truetype(d, 26)
+            phong = ImageFont.truetype(d, 28)
             break
-    if phong is None:
+    else:
         return anh
 
-    cao_them = 96
-    khung = Image.new("RGB", (anh.size[0], anh.size[1] + cao_them), (238, 232, 216))
+    khung = Image.new("RGB", (anh.size[0], anh.size[1] + 104), (240, 234, 218))
     khung.paste(anh, (0, 0))
     ve = ImageDraw.Draw(khung)
-    y = anh.size[1] + 18
     for i, chu in enumerate(dong):
-        rong_chu = ve.textbbox((0, 0), chu, font=phong)[2]
-        ve.text(((anh.size[0] - rong_chu) / 2, y + i * 34), chu,
-                font=phong, fill=(74, 62, 48))
+        rong = ve.textbbox((0, 0), chu, font=phong)[2]
+        ve.text(((anh.size[0] - rong) / 2, anh.size[1] + 20 + i * 36), chu,
+                font=phong, fill=(70, 58, 44))
     return khung
 
 
 # --------------------------------------------------------------------------
-def ve_toan_bo(che_do: str = "sepia", hat: float = 1.0, ty_le: int = 3,
+def ve_toan_bo(che_do: str = "sepia", hat: float = 1.0, hat_giong: int = 1945,
                chu_thich: bool = False) -> Image.Image:
-    t = BucTranh(ty_le=ty_le)
-    ve_nen(t)
-    ve_bong_nguoi(t)
-    ve_ban(t)
-    ve_dau(t)          # đầu và cổ vẽ trước để cổ áo trùm lên
-    ve_than(t)
-    ve_chom_rau(t)
-    ve_ban_tuyen_ngon(t)
-    ve_ban_tay(t)
-    ve_micro(t)
-    t.hop_nhat()
-    anh = hieu_ung_anh_cu(t.thu_nho(), che_do=che_do, hat=hat)
-    if chu_thich:
-        anh = ghi_chu_thich(anh)
-    return anh
+    c = Canh()
+    dat_bien_doi()
+    dung_hau_canh(c)
+    # Đầu được mô tả trong hệ toạ độ riêng rồi phóng to đặt vào khung ảnh,
+    # nhờ vậy phần chân dung chiếm khuôn hình đúng như bức ảnh gốc.
+    dat_bien_doi(1.6, -300.0, -242.4)
+    dung_dau(c)          # đầu và cổ dựng trước để cổ áo trùm lên
+    dat_bien_doi()
+    dung_than(c)
+    dat_bien_doi(1.6, -300.0, -242.4)
+    dung_chom_rau(c)
+    dat_bien_doi()
+    dung_ban(c)          # mặt bàn che phần dưới thân: người đứng sau bàn
+    dung_ban_tay(c)
+    dung_ban_thao(c)
+    dung_micro(c)
+    anh = thanh_anh(chieu_sang(c), c.tien_canh, che_do, hat, hat_giong)
+    return ghi_chu_thich(anh) if chu_thich else anh
 
 
 def main() -> None:
@@ -536,23 +684,20 @@ def main() -> None:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     bp.add_argument("-o", "--output", default="tuyen_ngon_doc_lap.png",
                     help="tên tệp ảnh xuất ra (mặc định: tuyen_ngon_doc_lap.png)")
-    bp.add_argument("--che-do", choices=["sepia", "xam", "mau"], default="sepia",
-                    help="tông màu: sepia (ảnh cũ), xam (đen trắng), mau (giữ màu vẽ)")
+    bp.add_argument("--che-do", choices=["sepia", "xam"], default="sepia",
+                    help="tông màu: sepia (ảnh cũ) hoặc xam (đen trắng)")
     bp.add_argument("--hat", type=float, default=1.0,
                     help="độ đậm của hạt phim, 0 là tắt (mặc định: 1.0)")
-    bp.add_argument("--ty-le", type=int, default=3,
-                    help="hệ số siêu lấy mẫu, càng lớn nét càng mịn (mặc định: 3)")
     bp.add_argument("--chu-thich", action="store_true",
                     help="in thêm dòng chú thích dưới ảnh")
     bp.add_argument("--seed", type=int, default=1945,
-                    help="hạt giống ngẫu nhiên cho nếp vải, sợi râu, hạt phim")
-    tham_so = bp.parse_args()
+                    help="hạt giống ngẫu nhiên cho hạt phim và vết xước")
+    ts = bp.parse_args()
 
-    random.seed(tham_so.seed)
-    anh = ve_toan_bo(che_do=tham_so.che_do, hat=tham_so.hat,
-                     ty_le=tham_so.ty_le, chu_thich=tham_so.chu_thich)
-    anh.save(tham_so.output)
-    print(f"Đã lưu {tham_so.output} ({anh.size[0]}x{anh.size[1]})")
+    anh = ve_toan_bo(che_do=ts.che_do, hat=ts.hat, hat_giong=ts.seed,
+                     chu_thich=ts.chu_thich)
+    anh.save(ts.output)
+    print(f"Đã lưu {ts.output} ({anh.size[0]}x{anh.size[1]})")
 
 
 if __name__ == "__main__":
