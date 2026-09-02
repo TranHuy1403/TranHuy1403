@@ -29,13 +29,25 @@ chỉ cần Pillow là vẽ lại được; bước vạch nét chỉ chạy khi
    cho mép trái và mép phải để suy ra bốn góc bức tranh trong ảnh chụp.
 2. **Nắn phẳng.** Phép biến đổi phối cảnh đưa bốn góc ấy về một hình chữ
    nhật, khử độ nghiêng của máy ảnh.
-3. **Tách hai màu.** Chuyển sang hệ màu HSV rồi lấy vùng vàng theo sắc màu —
-   nhờ vậy các vạch tối của cánh cửa cuốn và những vệt loá không lọt vào.
-   Mặt nạ được dọn bằng các phép hình thái học.
+3. **Tách hai màu.** Không dùng cửa sổ sắc màu, vì những nét vàng mảnh nhất
+   trên nền đỏ — vành tai, sợi tóc đỉnh đầu, đường hàm — trong ảnh gốc chỉ
+   dày chừng một điểm ảnh nên bị pha loãng, sắc màu ngả sang cam và rơi ra
+   ngoài cửa sổ. Thay vào đó dùng *độ vàng* `min(R, G) − B`: vàng cho trị số
+   cao, đỏ cho trị số âm, vệt loá trắng thì gần 0. Rồi lấy **ngưỡng trễ hai
+   mức**: mức cao khoanh những mảng chắc chắn là màu vẽ, mức thấp vét thêm
+   nét mảnh nhưng chỉ giữ phần nối liền với mảng chắc chắn — nhờ vậy các vệt
+   loá rời rạc trên cửa cuốn không lọt vào. Vạch ngang của cánh cửa cuốn cắt
+   nét mảnh thành từng đoạn đứt quãng, nên có thêm một phép đóng theo chiều
+   dọc để nối chúng lại mà không dính sang nét bên cạnh.
 4. **Vạch biên và giản lược.** Dò biên bằng marching squares (chính xác dưới
    một điểm ảnh) rồi giản lược bằng Douglas-Peucker. Màu của mỗi đường biên
-   xác định bằng cách lấy mẫu ngay bên trong nó; các hình xếp theo diện tích
-   giảm dần nên chỗ lồng nhau như vành micro hay con ngươi đều đúng.
+   xác định bằng cách tô đa giác ấy ra một mặt nạ nhỏ, lùi vào một điểm ảnh
+   rồi đối chiếu với mặt nạ vàng — cách này đúng với cả những hình lõm nhiều
+   ngóc ngách. Các hình xếp theo diện tích giảm dần nên chỗ lồng nhau như
+   vành micro hay con ngươi đều ra đúng.
+
+Bốn góc còn được lùi nhẹ vào trong (`--lui`) trước khi nắn phẳng, để viền
+cửa màu be quanh bức tranh không bị ngưỡng thấp kéo vào.
 
 Hai nhãn *Hoàng Sa* và *Trường Sa* trong ảnh quá nhỏ để vạch cho ra chữ đọc
 được, nên vùng ấy được bỏ qua khi vạch nét và vẽ lại bằng phông chữ.
@@ -47,6 +59,7 @@ Hai nhãn *Hoàng Sa* và *Trường Sa* trong ảnh quá nhỏ để vạch cho
 | `--rong` | Bề rộng ảnh xuất ra (mặc định `2000`) |
 | `--mau` | `tuong` (màu đo từ bức tường) hoặc `co` (theo mẫu quốc kỳ) |
 | `--khong-chu` | Bỏ hai nhãn Hoàng Sa và Trường Sa |
+| `--nguong-vang`, `--nguong-thap` | Hai mức của ngưỡng trễ (của `vach_net_tu_anh.py`) |
 | `--cua-cuon` | Thêm vạch ngang mô phỏng cánh cửa cuốn |
 
 Mép trái bức ảnh gốc bị khuôn hình cắt mất một phần chữ *2* và cánh tay, nên

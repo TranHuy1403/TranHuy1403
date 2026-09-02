@@ -29,7 +29,7 @@ import argparse
 import json
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 from skimage import filters, measure, morphology
 
 # Hai nhãn quần đảo trong tranh quá nhỏ để vạch nét cho ra chữ đọc được, nên
@@ -68,22 +68,51 @@ def _he_so_phoi_canh(dich, nguon):
     return np.linalg.solve(np.array(A, float), np.array(B, float))
 
 
+def lui_khung(goc, lui: float):
+    """Lùi bốn góc vào phía trong, để không lấy phải viền cửa quanh bức tranh."""
+    tx = sum(p[0] for p in goc) / 4.0
+    ty = sum(p[1] for p in goc) / 4.0
+    return [(x + (tx - x) * lui, y + (ty - y) * lui) for x, y in goc]
+
+
 def nan_phang(anh: Image.Image, goc, rong: int, cao: int) -> Image.Image:
     hs = _he_so_phoi_canh([(0, 0), (rong, 0), (rong, cao), (0, cao)], goc)
     return anh.transform((rong, cao), Image.PERSPECTIVE, hs, Image.BICUBIC)
 
 
-def mat_na_vang(anh: Image.Image, don: int = 2, nho_nhat: float = 14.0) -> np.ndarray:
-    """Vùng màu vàng, lấy theo sắc màu nên không sợ vạch cửa cuốn và vệt loá."""
-    hsv = np.asarray(anh.convert("HSV")).astype(np.int16)
-    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
-    m = (h > 25) & (h < 62) & (s > 60) & (v > 110)
+def mat_na_vang(anh: Image.Image, don: int = 1, nho_nhat: float = 14.0,
+                nguong_vang: int = 40, nguong_thap: int = 8,
+                va_dut: int = 5) -> np.ndarray:
+    """Vùng màu vàng của bức tranh.
+
+    Không dùng cửa sổ sắc màu vì các vạch vàng mảnh trên nền đỏ - nét tóc,
+    vành tai, đường viền hộp sọ - bị pha màu nên sắc màu ngả sang cam và rơi
+    ra ngoài cửa sổ. Thay vào đó dùng "độ vàng" min(R, G) - B: màu vàng cho
+    trị số cao, màu đỏ cho trị số âm, còn vệt loá trắng thì gần 0. Cách này
+    giữ được cả những nét mảnh chỉ rộng vài điểm ảnh.
+
+    Các nét mảnh nhất - vành tai, sợi tóc trên đỉnh đầu, đường hàm - trong
+    ảnh gốc chỉ dày chừng một điểm ảnh nên độ vàng của chúng bị pha loãng,
+    không vượt nổi ngưỡng chính. Vì vậy dùng ngưỡng trễ hai mức: mức cao
+    khoanh những mảng chắc chắn là màu vẽ, mức thấp vét thêm các nét mảnh,
+    nhưng chỉ giữ phần nối liền với mảng chắc chắn - nhờ đó vệt loá rời rạc
+    trên cửa cuốn không lọt vào.
+    """
+    px = np.asarray(anh).astype(np.float32)
+    r, g, b = px[..., 0], px[..., 1], px[..., 2]
+    do_vang = np.minimum(r, g) - b
+    m = filters.apply_hysteresis_threshold(do_vang, nguong_thap, nguong_vang)
+    m = m & (r > 90)
+    # Vạch ngang của cánh cửa cuốn cắt các nét mảnh thành từng đoạn đứt quãng;
+    # phép đóng theo chiều dọc nối chúng lại mà không dính sang nét bên cạnh.
+    if va_dut:
+        m = morphology.closing(m, np.ones((va_dut, 1), bool))
     vun = max(4, int(nho_nhat))          # giữ lại được cả những đảo nhỏ
     m = morphology.remove_small_objects(m, vun)
     m = morphology.remove_small_holes(m, vun)
     if don:
         m = morphology.closing(m, morphology.disk(don))
-        m = morphology.opening(m, morphology.disk(max(1, don - 1)))
+        m = morphology.opening(m, morphology.disk(don))
     return m
 
 
@@ -92,17 +121,30 @@ def _dien_tich(p):
     return 0.5 * abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))
 
 
-def _diem_ben_trong(p):
-    """Một điểm chắc chắn nằm trong đa giác: cắt ngang qua giữa hình."""
-    y = (p[:, 0].min() + p[:, 0].max()) / 2.0
-    xs = []
-    for i in range(len(p)):
-        y0, x0 = p[i]
-        y1, x1 = p[(i + 1) % len(p)]
-        if (y0 - y) * (y1 - y) < 0:
-            xs.append(x0 + (x1 - x0) * (y - y0) / (y1 - y0))
-    xs.sort()
-    return y, ((xs[0] + xs[1]) / 2.0 if len(xs) >= 2 else float(p[:, 1].mean()))
+def _mau_ben_trong(p, m: np.ndarray) -> str:
+    """Màu của vùng nằm trong một đường biên.
+
+    Tô đa giác ra một mặt nạ nhỏ bằng đúng khung bao của nó, lùi vào một
+    điểm ảnh rồi đối chiếu với mặt nạ vàng. Cách này đúng với mọi hình, kể
+    cả hình lõm nhiều ngóc ngách mà phép cắt ngang một đường không kham nổi.
+    """
+    y0, y1 = int(np.floor(p[:, 0].min())), int(np.ceil(p[:, 0].max()))
+    x0, x1 = int(np.floor(p[:, 1].min())), int(np.ceil(p[:, 1].max()))
+    rong, cao = x1 - x0 + 3, y1 - y0 + 3
+    if rong < 3 or cao < 3:
+        return "vang"
+    hinh = Image.new("1", (rong, cao), 0)
+    ImageDraw.Draw(hinh).polygon([(x - x0 + 1, y - y0 + 1) for y, x in p], fill=1)
+    trong = np.asarray(hinh)
+    if trong.sum() > 12:                      # lùi vào để tránh chính đường biên
+        trong = morphology.binary_erosion(trong, morphology.disk(1))
+    vung = np.zeros((cao, rong), bool)
+    ya, yb = max(0, y0 - 1), min(m.shape[0], y0 - 1 + cao)
+    xa, xb = max(0, x0 - 1), min(m.shape[1], x0 - 1 + rong)
+    vung[ya - (y0 - 1):yb - (y0 - 1), xa - (x0 - 1):xb - (x0 - 1)] = m[ya:yb, xa:xb]
+    if not trong.any():
+        return "vang"
+    return "vang" if vung[trong].mean() > 0.5 else "do"
 
 
 def vach_net(m: np.ndarray, dung_sai: float, nho_nhat: float, mem: float,
@@ -121,14 +163,11 @@ def vach_net(m: np.ndarray, dung_sai: float, nho_nhat: float, mem: float,
         q = measure.approximate_polygon(p, tolerance=dung_sai)
         if len(q) < 4:
             continue
-        yy, xx = _diem_ben_trong(q)
-        yi, xi = int(round(yy)), int(round(xx))
-        if not (0 <= yi < cao and 0 <= xi < rong):
-            continue
+        xx, yy = float(q[:, 1].mean()), float(q[:, 0].mean())
         if any(x0 * rong - 12 < xx < x1 * rong + 12 and y0 * cao - 10 < yy < y1 * cao + 10
                for x0, y0, x1, y1 in bo_qua):
             continue                      # nằm trong ô chữ, để phông chữ lo
-        hinh.append((_dien_tich(q), "vang" if m[yi, xi] else "do", q))
+        hinh.append((_dien_tich(q), _mau_ben_trong(q, m), q))
     hinh.sort(key=lambda t: -t[0])          # hình lớn vẽ trước, hình nhỏ đè lên
     return hinh
 
@@ -139,11 +178,21 @@ def main() -> None:
     bp.add_argument("anh", help="ảnh chụp bức tranh tường")
     bp.add_argument("-o", "--output", default="net_tranh_tuong.json",
                     help="tệp dữ liệu vector xuất ra")
-    bp.add_argument("--rong", type=int, default=1300,
+    bp.add_argument("--lui", type=float, default=0.014,
+                    help="tỉ lệ lùi bốn góc vào trong, để không lấy phải viền cửa")
+    bp.add_argument("--nguong-vang", type=int, default=40,
+                    help="mức cao của ngưỡng trễ: độ vàng min(R,G)-B của những "
+                         "mảng chắc chắn là màu vẽ")
+    bp.add_argument("--nguong-thap", type=int, default=8,
+                    help="mức thấp của ngưỡng trễ: hạ xuống thì vét thêm các nét "
+                         "mảnh, nhưng dễ dính nhiễu")
+    bp.add_argument("--va-dut", type=int, default=5,
+                    help="chiều cao phép đóng dọc để vá vết đứt do vạch cửa cuốn")
+    bp.add_argument("--rong", type=int, default=1900,
                     help="bề rộng ảnh sau khi nắn phẳng, tính bằng điểm ảnh")
     bp.add_argument("--dung-sai", type=float, default=0.9,
                     help="sai số cho phép khi giản lược đường biên (điểm ảnh)")
-    bp.add_argument("--nho-nhat", type=float, default=4.0,
+    bp.add_argument("--nho-nhat", type=float, default=12.0,
                     help="bỏ qua các hình có diện tích nhỏ hơn ngần này")
     bp.add_argument("--mem", type=float, default=1.1,
                     help="độ làm mềm mặt nạ trước khi dò biên")
@@ -151,14 +200,15 @@ def main() -> None:
     ts = bp.parse_args()
 
     anh = Image.open(ts.anh).convert("RGB")
-    goc = tim_khung(np.asarray(anh).astype(np.int16))
+    goc = lui_khung(tim_khung(np.asarray(anh).astype(np.int16)), ts.lui)
     ty_le = (goc[2][1] - goc[0][1]) / max(1e-6, goc[1][0] - goc[0][0])
     cao = int(round(ts.rong * ty_le))
     phang = nan_phang(anh, goc, ts.rong, cao)
     if ts.xem:
         phang.save(ts.xem)
 
-    m = mat_na_vang(phang, nho_nhat=ts.nho_nhat)
+    m = mat_na_vang(phang, nho_nhat=ts.nho_nhat, nguong_vang=ts.nguong_vang,
+                    nguong_thap=ts.nguong_thap, va_dut=ts.va_dut)
     hinh = vach_net(m, ts.dung_sai, ts.nho_nhat, ts.mem,
                     bo_qua=[o for _, o in O_CHU])
 

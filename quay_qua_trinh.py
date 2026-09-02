@@ -100,7 +100,7 @@ def dung_phim(duong_anh: str, fps: int = 25, nhanh: float = 1.0):
                     "$ python3 vach_net_tu_anh.py anh_chup.jpg -o net_tranh_tuong.json")
 
     # --- Bước 2: tìm bốn góc ---
-    goc = vn.tim_khung(px)
+    goc = vn.lui_khung(vn.tim_khung(px), 0.014)   # lùi vào để bỏ viền cửa
     for i in range(lap(fps * 2)):
         t = min(1.0, i / max(1, lap(fps * 1.2)))
         tam = anh.copy()
@@ -133,23 +133,23 @@ def dung_phim(duong_anh: str, fps: int = 25, nhanh: float = 1.0):
                     "bốn góc được đưa về đúng một hình chữ nhật")
 
     ty_le = (goc[2][1] - goc[0][1]) / max(1e-6, goc[1][0] - goc[0][0])
-    rong = 1300
+    rong = 1900
     cao = int(round(rong * ty_le))
     phang = vn.nan_phang(anh, goc, rong, cao)
 
     # --- Bước 4: tách vùng vàng ---
-    m = vn.mat_na_vang(phang, nho_nhat=4.0)
+    m = vn.mat_na_vang(phang, nho_nhat=12.0)
     anh_m = _anh_mat_na(m)
     for i in range(lap(fps)):
         yield khung(_tron(phang, anh_m, min(1.0, i / max(1, lap(fps * 0.7)))),
                     "Bước 4 — tách vùng vàng theo sắc màu",
-                    "hệ màu HSV, nên vạch cửa cuốn và vệt loá không lọt vào")
+                    "ngưỡng trễ hai mức trên độ vàng min(R,G) - B")
     for _ in range(lap(fps)):
         yield khung(anh_m, "Bước 4 — tách vùng vàng theo sắc màu",
-                    "dọn mặt nạ bằng các phép hình thái học")
+                    "mức thấp vét nét mảnh, chỉ giữ phần nối với mảng chắc chắn")
 
     # --- Bước 5: dò biên ---
-    hinh = vn.vach_net(m, 0.9, 4.0, 1.1, bo_qua=[o for _, o in vn.O_CHU])
+    hinh = vn.vach_net(m, 0.9, 12.0, 1.1, bo_qua=[o for _, o in vn.O_CHU])
     so_khung = lap(fps * 3)
     for i in range(so_khung):
         den = int(len(hinh) * (i + 1) / so_khung)
