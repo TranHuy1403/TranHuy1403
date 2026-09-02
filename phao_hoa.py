@@ -33,11 +33,12 @@ BANG_MAU = [(255, 214, 64), (255, 92, 74), (255, 246, 226), (255, 156, 60),
 class Tia:
     """Một tia lửa: vị trí, vận tốc, màu, tuổi thọ."""
 
-    __slots__ = ("x", "y", "vx", "vy", "mau", "doi", "tuoi", "lap_lanh")
+    __slots__ = ("x", "y", "vx", "vy", "mau", "doi", "tuoi", "lap_lanh", "nang")
 
-    def __init__(self, x, y, vx, vy, mau, doi, lap_lanh=0.0):
+    def __init__(self, x, y, vx, vy, mau, doi, lap_lanh=0.0, nang=1.0):
         self.x, self.y, self.vx, self.vy = x, y, vx, vy
         self.mau, self.doi, self.tuoi, self.lap_lanh = mau, doi, 0.0, lap_lanh
+        self.nang = nang            # tia nặng thì rơi nhanh, cho dáng liễu rủ
 
 
 class PhaoHoa:
@@ -48,34 +49,86 @@ class PhaoHoa:
         self.rng = random.Random(hat_giong)
         self.mat_do = mat_do
         self.troi = np.zeros((cao, rong, 3), np.float32)
+        self.sao = self._gieo_sao(140)
+        y, x = np.mgrid[0:cao, 0:rong]
+        r = np.sqrt(((x - rong / 2) / (rong * 0.62)) ** 2
+                    + ((y - cao / 2) / (cao * 0.68)) ** 2)
+        self.mo_goc = np.clip(1.05 - 0.55 * r ** 2.2, 0, 1).astype(np.float32)
         self.qua = []           # pháo đang bay lên
         self.tia = []           # tia lửa sau khi nổ
         self.khung = 0
 
+    def _gieo_sao(self, so):
+        """Vài ngôi sao mờ cho bầu trời có chiều sâu."""
+        return [(self.rng.randrange(self.rong), self.rng.randrange(self.cao),
+                 self.rng.uniform(0.10, 0.45), self.rng.uniform(0, math.tau))
+                for _ in range(so)]
+
     # -- sinh pháo --
     def ban_len(self, x=None, manh=1.0):
         x = self.rng.uniform(self.rong * 0.10, self.rong * 0.90) if x is None else x
-        dich = self.rng.uniform(self.cao * 0.14, self.cao * 0.46)   # độ cao muốn nổ
+        dich = self.rng.uniform(self.cao * 0.08, self.cao * 0.44)   # độ cao muốn nổ
         # Nhân thêm hệ số vì lực cản ăn bớt vận tốc trên đường bay lên.
-        vy = -math.sqrt(max(1.0, 2 * TRONG_LUC * (self.cao - dich))) * 1.55 * manh
+        vy = -math.sqrt(max(1.0, 2 * TRONG_LUC * (self.cao - dich))) * 1.78 * manh
         mau = self.rng.choice(BANG_MAU)
         self.qua.append(Tia(x, self.cao + 8, self.rng.uniform(-0.5, 0.5), vy, mau,
                             doi=400))
 
-    def no(self, x, y, mau, so_tia=None):
-        """Nổ: các tia toả đều theo mọi hướng, tốc độ phân tán quanh một trị số."""
-        so_tia = so_tia or self.rng.randint(200, 340)
-        nhanh = self.rng.uniform(3.4, 5.6)
-        vong = self.rng.random() < 0.35          # vài quả nổ thành vòng tròn
-        for _ in range(so_tia):
-            goc = self.rng.uniform(0, math.tau)
-            v = nhanh * (self.rng.uniform(0.94, 1.06) if vong
-                         else abs(self.rng.gauss(1.0, 0.32)))
-            pha = self.rng.uniform(0.82, 1.0)
-            m = tuple(c * pha for c in mau)
-            self.tia.append(Tia(x, y, math.cos(goc) * v, math.sin(goc) * v, m,
-                                doi=self.rng.uniform(55, 120),
-                                lap_lanh=self.rng.uniform(0, math.tau)))
+    def no(self, x, y, mau, kieu=None):
+        """Nổ pháo. Mỗi kiểu cho một dáng khác nhau.
+
+        - `vong`  : mọi tia cùng tốc độ, nở thành vòng tròn đều.
+        - `cuc`   : tốc độ tản quanh một trị số, dáng bông cúc.
+        - `lieu`  : tia nặng và sống lâu, rủ xuống như cành liễu.
+        - `kep`   : hai lớp, lõi một màu, vành ngoài một màu khác.
+        """
+        kieu = kieu or self.rng.choices(["cuc", "vong", "lieu", "kep"],
+                                        weights=[4, 3, 2, 3])[0]
+        self._chop(x, y, mau)
+        if kieu == "lieu":
+            mau = (255, 208, 120)
+            lop = [(self.rng.uniform(2.0, 3.0), (150, 240), 2.3, 320)]
+        elif kieu == "vong":
+            lop = [(self.rng.uniform(3.6, 5.0), (60, 100), 1.0, 300)]
+        elif kieu == "kep":
+            mau2 = self.rng.choice([m for m in BANG_MAU if m != mau])
+            lop = [(self.rng.uniform(2.2, 3.0), (50, 90), 1.0, 150),
+                   (self.rng.uniform(4.4, 6.2), (60, 110), 1.0, 220)]
+        else:
+            lop = [(self.rng.uniform(3.4, 5.4), (55, 120), 1.0, 300)]
+
+        for chi_so, (nhanh, doi, nang, so_tia) in enumerate(lop):
+            m_lop = mau2 if kieu == "kep" and chi_so == 1 else mau
+            deu = kieu in ("vong", "kep")
+            for _ in range(so_tia):
+                goc = self.rng.uniform(0, math.tau)
+                v = nhanh * (self.rng.uniform(0.94, 1.06) if deu
+                             else abs(self.rng.gauss(1.0, 0.32)))
+                pha = self.rng.uniform(0.82, 1.0)
+                self.tia.append(Tia(x, y, math.cos(goc) * v, math.sin(goc) * v,
+                                    tuple(c * pha for c in m_lop),
+                                    doi=self.rng.uniform(*doi),
+                                    lap_lanh=self.rng.uniform(0, math.tau),
+                                    nang=nang))
+        if self.rng.random() < 0.5:                  # thêm bụi sáng lấp lánh
+            for _ in range(70):
+                goc = self.rng.uniform(0, math.tau)
+                v = abs(self.rng.gauss(1.6, 0.8))
+                self.tia.append(Tia(x, y, math.cos(goc) * v, math.sin(goc) * v,
+                                    (255, 250, 230), doi=self.rng.uniform(25, 60),
+                                    lap_lanh=self.rng.uniform(0, math.tau), nang=0.7))
+
+    def _chop(self, x, y, mau, ban_kinh=52):
+        """Chớp sáng ngay lúc nổ, rồi tắt dần theo hệ số làm mờ của bầu trời."""
+        x0, x1 = int(max(0, x - ban_kinh)), int(min(self.rong, x + ban_kinh))
+        y0, y1 = int(max(0, y - ban_kinh)), int(min(self.cao, y + ban_kinh))
+        if x1 <= x0 or y1 <= y0:
+            return
+        gx = np.arange(x0, x1, dtype=np.float32) - x
+        gy = np.arange(y0, y1, dtype=np.float32) - y
+        d2 = gy[:, None] ** 2 + gx[None, :] ** 2
+        vet = np.exp(-d2 / (2 * (ban_kinh / 2.6) ** 2)).astype(np.float32)
+        self.troi[y0:y1, x0:x1] += vet[..., None] * np.asarray(mau, np.float32) * 0.9
 
     # -- tiến một khung hình --
     def buoc(self) -> np.ndarray:
@@ -89,7 +142,12 @@ class PhaoHoa:
             q.vx *= CAN
             q.x += q.vx
             q.y += q.vy
-            self._cham(q.x, q.y, q.mau, 0.55)
+            self._cham(q.x, q.y, q.mau, 0.7)
+            self.tia.append(Tia(q.x + self.rng.uniform(-1.5, 1.5), q.y,
+                                self.rng.uniform(-0.35, 0.35),
+                                self.rng.uniform(-0.3, 0.5),
+                                (200, 150, 90), doi=self.rng.uniform(5, 13),
+                                lap_lanh=self.rng.uniform(0, math.tau), nang=0.5))
             if q.vy > -0.6:                       # tới đỉnh thì nổ
                 self.no(q.x, q.y, q.mau)
             else:
@@ -97,12 +155,14 @@ class PhaoHoa:
         self.qua = con_lai
 
         self.troi *= MO_DAN
+        for x, y, sang, pha in self.sao:             # sao nhấp nháy rất nhẹ
+            self.troi[y, x] += 90 * sang * (0.7 + 0.3 * math.sin(self.khung * 0.08 + pha))
         song, xs, ys, ws = [], [], [], []
         for t in self.tia:
             t.tuoi += 1
             if t.tuoi >= t.doi:
                 continue
-            t.vy = t.vy * CAN + TRONG_LUC
+            t.vy = t.vy * CAN + TRONG_LUC * t.nang
             t.vx *= CAN
             t.x += t.vx
             t.y += t.vy
@@ -137,6 +197,7 @@ class PhaoHoa:
     # -- kết xuất --
     def anh(self, nen=(12, 10, 20), quang=True) -> Image.Image:
         v = 1.0 - np.exp(-np.clip(self.troi / 255.0, 0, 8) * 2.6)   # nén sáng
+        v *= self.mo_goc[..., None]                                 # tối dần bốn góc
         anh = Image.fromarray(np.clip(v * 255, 0, 255).astype(np.uint8), "RGB")
         if quang:
             # Quầng sáng: cộng thêm bản làm mờ, không pha trộn, để đốm sáng

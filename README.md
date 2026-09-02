@@ -109,15 +109,19 @@ nhỏ, chạy được riêng:
 python3 phao_hoa.py -o phao_hoa.mp4 --giay 8
 ```
 
-- Mỗi quả pháo là một hạt bay lên, chịu **trọng lực** và **lực cản**; khi
-  vận tốc thẳng đứng gần bằng không, tức tới đỉnh, thì nổ.
-- Vụ nổ sinh 200-340 tia, hướng rải đều quanh vòng tròn, tốc độ phân tán
-  quanh một trị số; khoảng một phần ba số quả nổ thành vòng đều nhau.
-- Mỗi tia có tuổi thọ riêng, độ sáng giảm theo luỹ thừa của phần đời còn
-  lại và nhấp nháy theo một hàm sin lệch pha ngẫu nhiên.
+- Mỗi quả pháo là một hạt bay lên, chịu **trọng lực** và **lực cản**, để lại
+  đuôi lửa lấm tấm; khi vận tốc thẳng đứng gần bằng không, tức tới đỉnh,
+  thì nổ và loé một chớp sáng.
+- Bốn kiểu nổ: `cuc` (bông cúc, tốc độ tản quanh một trị số), `vong` (mọi
+  tia cùng tốc độ nên nở thành vòng tròn đều), `lieu` (tia nặng, sống lâu,
+  rủ xuống như cành liễu), `kep` (hai lớp, lõi một màu, vành ngoài màu
+  khác). Quá nửa số quả rắc thêm bụi sáng lấp lánh.
+- Mỗi tia có tuổi thọ và hệ số nặng riêng, độ sáng giảm theo luỹ thừa của
+  phần đời còn lại và nhấp nháy theo một hàm sin lệch pha ngẫu nhiên.
 - **Vệt sáng** có được nhờ giữ lại khung hình trước rồi nhân với 0,855 —
   ánh sáng cũ mờ dần thay vì biến mất. Sau cùng cộng thêm một bản làm mờ
-  để tạo quầng hào quang, và nén sáng bằng hàm `1 - exp(-x)` cho khỏi cháy.
+  để tạo quầng hào quang, nén sáng bằng hàm `1 - exp(-x)` cho khỏi cháy, và
+  tối dần bốn góc. Bầu trời còn được rắc ít sao mờ cho có chiều sâu.
 
 ### Quay riêng dây chuyền vạch nét — `quay_qua_trinh.py`
 

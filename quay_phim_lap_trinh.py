@@ -396,12 +396,15 @@ def phan_phao_hoa(hinh, kich_thuoc, fps, lap):
     ty = min(rong * 0.94 / kt_rong, cao * 0.90 / kt_cao)
     dx = (rong - kt_rong * ty) / 2
     dy = (cao - kt_cao * ty) / 2
-    duong = [[(float(x) * ty + dx, float(y) * ty + dy) for y, x in q]
-             for _, _, q in hinh]
+    # Nét dày mỏng theo cỡ hình: mảng lớn cho nét đậm, chi tiết nhỏ nét thanh.
+    lon_nhat = max(dt for dt, _, _ in hinh) if hinh else 1.0
+    duong = [([(float(x) * ty + dx, float(y) * ty + dy) for y, x in q],
+              2 if dt < lon_nhat * 0.02 else (3 if dt < lon_nhat * 0.25 else 4))
+             for dt, _, q in hinh]
 
-    n = lap(fps * 9)
+    n = lap(fps * 10)
     for i in range(n):
-        if i in (1, 6, 13, 22, 33, 46, 61, 78, 97, 118, 141, 166, 193):
+        if i in (1, 6, 12, 20, 29, 40, 52, 66, 82, 100, 120, 142, 166, 192, 220):
             troi.ban_len()
         troi.buoc()
         nen = troi.anh()
@@ -413,14 +416,19 @@ def phan_phao_hoa(hinh, kich_thuoc, fps, lap):
             # nào cũng không nuốt mất chân dung.
             net = Image.new("L", (rong, cao), 0)
             ve = ImageDraw.Draw(net)
-            for d in duong[:den]:
-                ve.line(d + [d[0]], fill=255, width=3, joint="curve")
-            hao = net.filter(ImageFilter.GaussianBlur(9))
+            for d, day in duong[:den]:
+                ve.line(d + [d[0]], fill=255, width=day, joint="curve")
+            hao = net.filter(ImageFilter.GaussianBlur(11))
             nen = ImageChops.add(nen, Image.merge("RGB", (
-                Image.eval(hao, lambda p: int(p * 0.42)),
-                Image.eval(hao, lambda p: int(p * 0.40)),
-                Image.eval(hao, lambda p: int(p * 0.34)))))
-            nen.paste((240, 237, 230), mask=net)
+                Image.eval(hao, lambda p: int(p * 0.50)),
+                Image.eval(hao, lambda p: int(p * 0.44)),
+                Image.eval(hao, lambda p: int(p * 0.30)))))   # quầng ngả vàng
+            nen.paste((252, 246, 232), mask=net)
+        vao = min(1.0, (i + 1) / max(1, lap(fps * 0.5)))
+        ra = min(1.0, (n - i) / max(1, lap(fps * 0.8)))
+        mo = min(vao, ra)
+        if mo < 1.0:
+            nen = Image.blend(Image.new("RGB", nen.size, (0, 0, 0)), nen, mo)
         yield khung(nen, "phao_hoa.py", MA_PHAO_HOA,
                     _go_dan(MA_PHAO_HOA, n, i, 0.6))
 
