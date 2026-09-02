@@ -83,7 +83,8 @@ khép lại bằng cảnh pháo hoa:
 2. **Dây chuyền dựng bản cuối** — mặt nạ hai màu hiện lên, các đường biên
    được dò lần lượt, rồi hình vector được tô từ lớn đến nhỏ.
 3. **Pháo hoa** — chân dung hiện dần bằng nét trắng trên trời đêm, pháo hoa
-   nổ chung quanh. Chân dung ở đây không phải ảnh dán vào mà được vẽ lại từ
+   chỉ nổ ở dải bên phải để không trùm lên khuôn mặt (`khoang_x` của
+   `PhaoHoa` định dải ngang được phép bắn). Chân dung ở đây không phải ảnh dán vào mà được vẽ lại từ
    chính dữ liệu vector đã vạch nét: mỗi đường biên là một nét, vẽ dần từ
    hình lớn đến hình nhỏ. Quầng sáng của nét thì cộng vào trời, còn nét sắc
    thì tô đè lên, nhờ vậy pháo hoa dù chói cỡ nào cũng không nuốt mất hình.

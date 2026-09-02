@@ -390,7 +390,9 @@ def phan_phao_hoa(hinh, kich_thuoc, fps, lap):
     đến hình nhỏ, có quầng sáng mềm để hoà vào trời đêm.
     """
     rong, cao = RONG_KH - 80, CAO_HINH - 60
-    troi = ph.PhaoHoa(rong, cao, hat_giong=7, mat_do=0.115)
+    # Chỉ bắn ở dải bên phải để pháo không nở trùm lên khuôn mặt.
+    troi = ph.PhaoHoa(rong, cao, hat_giong=7, mat_do=0.115,
+                      khoang_x=(0.66, 0.95))
 
     kt_rong, kt_cao = kich_thuoc
     ty = min(rong * 0.94 / kt_rong, cao * 0.90 / kt_cao)

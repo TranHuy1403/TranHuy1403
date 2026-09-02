@@ -44,10 +44,12 @@ class Tia:
 class PhaoHoa:
     """Bầu trời có pháo hoa, tiến từng khung hình một."""
 
-    def __init__(self, rong: int, cao: int, hat_giong: int = 2, mat_do: float = 0.085):
+    def __init__(self, rong: int, cao: int, hat_giong: int = 2, mat_do: float = 0.085,
+                 khoang_x=(0.10, 0.90)):
         self.rong, self.cao = rong, cao
         self.rng = random.Random(hat_giong)
         self.mat_do = mat_do
+        self.khoang_x = khoang_x        # dải ngang được phép bắn pháo
         self.troi = np.zeros((cao, rong, 3), np.float32)
         self.sao = self._gieo_sao(140)
         y, x = np.mgrid[0:cao, 0:rong]
@@ -66,7 +68,9 @@ class PhaoHoa:
 
     # -- sinh pháo --
     def ban_len(self, x=None, manh=1.0):
-        x = self.rng.uniform(self.rong * 0.10, self.rong * 0.90) if x is None else x
+        if x is None:
+            x = self.rng.uniform(self.rong * self.khoang_x[0],
+                                 self.rong * self.khoang_x[1])
         dich = self.rng.uniform(self.cao * 0.08, self.cao * 0.44)   # độ cao muốn nổ
         # Nhân thêm hệ số vì lực cản ăn bớt vận tốc trên đường bay lên.
         vy = -math.sqrt(max(1.0, 2 * TRONG_LUC * (self.cao - dich))) * 1.78 * manh
