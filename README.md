@@ -52,6 +52,27 @@ Hai nhãn *Hoàng Sa* và *Trường Sa* trong ảnh quá nhỏ để vạch cho
 Mép trái bức ảnh gốc bị khuôn hình cắt mất một phần chữ *2* và cánh tay, nên
 bản vạch nét cũng thiếu đúng phần đó.
 
+### Quay lại quá trình — `quay_qua_trinh.py`
+
+Dựng một đoạn phim đi qua đúng sáu bước trên, mỗi khung hình lấy từ kết quả
+thật của bước ấy chứ không dàn dựng: ảnh chụp, bốn góc tìm được, cảnh nắn
+phẳng xoay dần về hình chữ nhật, mặt nạ vùng vàng hiện ra, các đường biên
+được dò lần lượt, rồi hình vector được tô từ lớn đến nhỏ.
+
+```bash
+pip install imageio imageio-ffmpeg
+python3 quay_qua_trinh.py anh_chup.jpg -o qua_trinh.mp4
+python3 quay_qua_trinh.py anh_chup.jpg -o qua_trinh.gif --nhanh 1.6
+```
+
+| Tuỳ chọn | Ý nghĩa |
+|---|---|
+| `-o`, `--output` | Tệp phim xuất ra, `.mp4` hoặc `.gif` |
+| `--fps` | Số khung hình mỗi giây (mặc định `25`) |
+| `--nhanh` | Hệ số tua nhanh, `2` là phim ngắn đi một nửa |
+
+Bản dựng sẵn: [`qua_trinh_dung_tranh.mp4`](qua_trinh_dung_tranh.mp4) — 18,5 giây.
+
 ## 2. Tranh cổ động hai màu vẽ hoàn toàn bằng mã — `ve_tranh_co_dong.py`
 
 Vẽ theo lối tranh tường quen thuộc: nền đỏ cờ, hình vàng phẳng, không tô
