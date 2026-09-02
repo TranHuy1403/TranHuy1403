@@ -46,6 +46,12 @@ chỉ cần Pillow là vẽ lại được; bước vạch nét chỉ chạy khi
    ngóc ngách. Các hình xếp theo diện tích giảm dần nên chỗ lồng nhau như
    vành micro hay con ngươi đều ra đúng.
 
+Riêng độ vàng thì chưa đủ. Những nét vẽ **nâu sẫm nằm trong vùng vàng** —
+khe mắt, mí mắt, nếp áo — vẫn cho độ vàng dương nên bị xếp nhầm là màu
+vàng, khiến con mắt vỡ vụn thành mấy chấm rời. Chúng khác nét vàng ở **kênh
+lục**: nét nâu có G chừng 40–110, còn nét vàng dù mảnh vẫn có G trên 110.
+Vì vậy mặt nạ có thêm điều kiện `--nguong-luc`.
+
 Bốn góc còn được lùi nhẹ vào trong (`--lui`) trước khi nắn phẳng, để viền
 cửa màu be quanh bức tranh không bị ngưỡng thấp kéo vào.
 
@@ -59,7 +65,7 @@ Hai nhãn *Hoàng Sa* và *Trường Sa* trong ảnh quá nhỏ để vạch cho
 | `--rong` | Bề rộng ảnh xuất ra (mặc định `2000`) |
 | `--mau` | `tuong` (màu đo từ bức tường) hoặc `co` (theo mẫu quốc kỳ) |
 | `--khong-chu` | Bỏ hai nhãn Hoàng Sa và Trường Sa |
-| `--nguong-vang`, `--nguong-thap` | Hai mức của ngưỡng trễ (của `vach_net_tu_anh.py`) |
+| `--nguong-vang`, `--nguong-thap`, `--nguong-luc` | Các ngưỡng tách màu (của `vach_net_tu_anh.py`) |
 | `--cua-cuon` | Thêm vạch ngang mô phỏng cánh cửa cuốn |
 
 Mép trái bức ảnh gốc bị khuôn hình cắt mất một phần chữ *2* và cánh tay, nên

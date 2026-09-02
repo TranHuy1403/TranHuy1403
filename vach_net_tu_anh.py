@@ -82,7 +82,7 @@ def nan_phang(anh: Image.Image, goc, rong: int, cao: int) -> Image.Image:
 
 def mat_na_vang(anh: Image.Image, don: int = 1, nho_nhat: float = 14.0,
                 nguong_vang: int = 40, nguong_thap: int = 8,
-                va_dut: int = 5) -> np.ndarray:
+                nguong_luc: int = 105, va_dut: int = 0) -> np.ndarray:
     """Vùng màu vàng của bức tranh.
 
     Không dùng cửa sổ sắc màu vì các vạch vàng mảnh trên nền đỏ - nét tóc,
@@ -97,14 +97,20 @@ def mat_na_vang(anh: Image.Image, don: int = 1, nho_nhat: float = 14.0,
     khoanh những mảng chắc chắn là màu vẽ, mức thấp vét thêm các nét mảnh,
     nhưng chỉ giữ phần nối liền với mảng chắc chắn - nhờ đó vệt loá rời rạc
     trên cửa cuốn không lọt vào.
+
+    Riêng độ vàng thì chưa đủ: những nét vẽ nâu sẫm trong vùng vàng - khe
+    mắt, mí mắt - vẫn cho độ vàng dương nên bị xếp nhầm là màu vàng, khiến
+    con mắt vỡ vụn thành mấy chấm. Chúng khác nét vàng ở kênh lục: nét nâu
+    có G chừng 40-110, còn nét vàng dù mảnh vẫn có G trên 110. Vì vậy có
+    thêm điều kiện `nguong_luc`.
     """
     px = np.asarray(anh).astype(np.float32)
     r, g, b = px[..., 0], px[..., 1], px[..., 2]
     do_vang = np.minimum(r, g) - b
     m = filters.apply_hysteresis_threshold(do_vang, nguong_thap, nguong_vang)
-    m = m & (r > 90)
-    # Vạch ngang của cánh cửa cuốn cắt các nét mảnh thành từng đoạn đứt quãng;
-    # phép đóng theo chiều dọc nối chúng lại mà không dính sang nét bên cạnh.
+    m = m & (r > 90) & (g > nguong_luc)
+    # Nếu ảnh chụp có vạch ngang cắt nét mảnh thành đoạn đứt quãng thì phép
+    # đóng theo chiều dọc nối chúng lại mà không dính sang nét bên cạnh.
     if va_dut:
         m = morphology.closing(m, np.ones((va_dut, 1), bool))
     vun = max(4, int(nho_nhat))          # giữ lại được cả những đảo nhỏ
@@ -114,6 +120,25 @@ def mat_na_vang(anh: Image.Image, don: int = 1, nho_nhat: float = 14.0,
         m = morphology.closing(m, morphology.disk(don))
         m = morphology.opening(m, morphology.disk(don))
     return m
+
+
+def gop_net_do(m: np.ndarray, toi_da: float = 3000, no: int = 3,
+               lap_lo: float = 120) -> np.ndarray:
+    """Nối các mảnh đỏ nhỏ nằm lọt trong vùng vàng cho thành nét liền.
+
+    Nét đỏ mảnh trên nền vàng - khe mắt, nếp áo, nếp nhăn - trong ảnh chụp
+    bị nhoè và đứt thành từng mảnh vụn, vạch nét ra sẽ thành một đám đốm rời
+    rạc. Ở đây các mảnh đỏ nhỏ được nở ra cho dính lại thành nét, còn những
+    mảng đỏ lớn - nền tranh, hốc mắt - thì giữ nguyên. Sau cùng lấp nốt các
+    lỗ quá nhỏ để hết đốm vụn.
+    """
+    do = ~m
+    nhan = measure.label(do)
+    dt = np.bincount(nhan.ravel())
+    nho = np.isin(nhan, np.nonzero((dt > 0) & (dt < toi_da))[0]) & do
+    if no:
+        nho = morphology.closing(nho, morphology.disk(no))
+    return morphology.remove_small_holes(m & ~nho, int(max(4, lap_lo)))
 
 
 def _dien_tich(p):
@@ -186,7 +211,16 @@ def main() -> None:
     bp.add_argument("--nguong-thap", type=int, default=8,
                     help="mức thấp của ngưỡng trễ: hạ xuống thì vét thêm các nét "
                          "mảnh, nhưng dễ dính nhiễu")
-    bp.add_argument("--va-dut", type=int, default=5,
+    bp.add_argument("--nguong-luc", type=int, default=105,
+                    help="ngưỡng kênh lục để tách nét vẽ nâu sẫm ra khỏi màu vàng")
+    bp.add_argument("--gop-net", type=float, default=3000,
+                    help="mảng đỏ nhỏ hơn ngần này (điểm ảnh vuông) thì được nở ra "
+                         "cho dính lại thành nét liền; 0 là tắt")
+    bp.add_argument("--no-net", type=int, default=1,
+                    help="bán kính nở khi gộp các mảnh nét đỏ")
+    bp.add_argument("--lap-lo", type=float, default=24,
+                    help="lấp các lỗ đỏ nhỏ hơn ngần này cho hết đốm vụn")
+    bp.add_argument("--va-dut", type=int, default=0,
                     help="chiều cao phép đóng dọc để vá vết đứt do vạch cửa cuốn")
     bp.add_argument("--rong", type=int, default=1900,
                     help="bề rộng ảnh sau khi nắn phẳng, tính bằng điểm ảnh")
@@ -207,9 +241,13 @@ def main() -> None:
     if ts.xem:
         phang.save(ts.xem)
 
-    m = mat_na_vang(phang, nho_nhat=ts.nho_nhat, nguong_vang=ts.nguong_vang,
-                    nguong_thap=ts.nguong_thap, va_dut=ts.va_dut)
-    hinh = vach_net(m, ts.dung_sai, ts.nho_nhat, ts.mem,
+    he = (ts.rong / 1900.0) ** 2          # các ngưỡng diện tích tính theo khổ chuẩn
+    m = mat_na_vang(phang, nho_nhat=ts.nho_nhat * he, nguong_vang=ts.nguong_vang,
+                    nguong_thap=ts.nguong_thap, nguong_luc=ts.nguong_luc,
+                    va_dut=ts.va_dut)
+    if ts.gop_net:
+        m = gop_net_do(m, ts.gop_net * he, ts.no_net, ts.lap_lo * he)
+    hinh = vach_net(m, ts.dung_sai, ts.nho_nhat * he, ts.mem,
                     bo_qua=[o for _, o in O_CHU])
 
     du_lieu = {
