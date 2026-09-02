@@ -378,32 +378,21 @@ def phan_day_chuyen(duong_anh, fps, lap):
     cuoi = _dat_ten_dao(_ve_hinh_da_giac(hinh, (rong, cao), len(hinh)), rong, cao)
     for _ in range(lap(fps * 2)):
         yield khung(cuoi, "ve_theo_tuong.py", ma, tong_ma)
-    for k in phan_phao_hoa(cuoi, fps, lap):
+    for k in phan_phao_hoa(fps, lap):
         yield k
 
 
-def phan_phao_hoa(tranh: Image.Image, fps, lap):
-    """Cảnh cuối: pháo hoa mô phỏng bằng hệ hạt, bức tranh hiện lên giữa trời."""
+def phan_phao_hoa(fps, lap):
+    """Cảnh cuối: chỉ có pháo hoa, mô phỏng bằng hệ hạt."""
     rong, cao = RONG_KH - 80, CAO_HINH - 60
-    troi = ph.PhaoHoa(rong, cao, hat_giong=7, mat_do=0.14)
-    cao_tranh = int(cao * 0.72)
-    nho = tranh.resize((int(cao_tranh * tranh.width / tranh.height), cao_tranh),
-                       Image.LANCZOS)
-    x0, y0 = (rong - nho.width) // 2, int(cao * 0.16)
+    troi = ph.PhaoHoa(rong, cao, hat_giong=7, mat_do=0.16)
 
     n = lap(fps * 8)
     for i in range(n):
-        if i in (1, 5, 11, 19, 28, 38, 50, 64, 80, 98, 118, 140, 164):
+        if i in (1, 5, 10, 16, 23, 31, 40, 50, 61, 73, 86, 100, 115, 131, 148, 166):
             troi.ban_len()
         troi.buoc()
-        nen = troi.anh()
-        mo = min(1.0, max(0.0, (i - lap(fps * 0.8)) / max(1, lap(fps * 1.2))))
-        if mo > 0:
-            vung = nen.crop((x0 - 6, y0 - 6, x0 + nho.width + 6, y0 + nho.height + 6))
-            khung_vien = Image.new("RGB", vung.size, (250, 238, 58))
-            khung_vien.paste(nho, (6, 6))
-            nen.paste(Image.blend(vung, khung_vien, mo), (x0 - 6, y0 - 6))
-        yield khung(nen, "phao_hoa.py", MA_PHAO_HOA,
+        yield khung(troi.anh(), "phao_hoa.py", MA_PHAO_HOA,
                     _go_dan(MA_PHAO_HOA, n, i, 0.7))
 
 
