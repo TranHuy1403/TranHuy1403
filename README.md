@@ -24,19 +24,40 @@ python3 ve_tranh_co_dong.py
 | `--rong` | Chiều rộng ảnh tính bằng điểm ảnh (mặc định `1600`) |
 | `--ty-le` | Hệ số siêu lấy mẫu khi vẽ, càng lớn bờ hình càng mịn (mặc định `3`) |
 | `--chu` | Dòng chữ phía dưới (mặc định `2-9-1945`) |
+| `--seed` | Hạt giống cho nhịp tay vẽ của các lọn tóc và sợi râu (mặc định `29`) |
 | `--cua-cuon` | Thêm vạch ngang mô phỏng cánh cửa cuốn nơi vẽ tranh tường |
 
-Vài điểm đáng nói trong mã:
+### Thuật toán vẽ
+
+Bốn ý chính khiến nét vẽ ra dáng bút lông chứ không phải đường máy tính:
+
+1. **Bo cong bằng phép cắt góc Chaikin** (`lam_muot`). Mỗi lượt thay một đỉnh
+   bằng hai điểm nằm trên hai cạnh kề, cạnh gãy biến thành cung cong. Ba
+   lượt là đủ mượt mà vẫn giữ dáng hình. Đường bờ biển chỉ bo hai lượt nên
+   dáng chữ S mềm lại mà các mũi đất không bị mài tròn.
+2. **Nét có bề rộng thay đổi** (`than_net`). Thay vì vẽ đường thẳng bề rộng
+   cố định, chương trình dựng đa giác bao quanh đường: đi hết mép trái rồi
+   vòng ngược mép phải, bề rộng tại mỗi điểm lấy theo một dáng bút —
+   `bung` (phình giữa), `vuot` (vuốt nhọn dần về cuối), `nhon` (nhọn cả hai
+   đầu), `deu` (đều). Lông mày, sợi râu, lọn tóc đều vuốt nhọn như thật.
+3. **Lọn tóc sinh theo hình cầu hộp sọ** (`_lon_toc`). Hộp sọ được xấp xỉ
+   bằng một hình cầu dẹt; mỗi lọn xuất phát từ một điểm trên chân tóc rồi
+   vừa dâng lên đỉnh (bán kính tăng) vừa xoay dần về giữa (góc thu lại),
+   nên các lọn chạy song song ôm lấy hộp sọ thay vì chụm vào một điểm.
+   Chòm râu cũng sinh theo cách tương tự, toả từ cằm rồi chụm về chóp râu.
+4. **Nhịp tay vẽ**. Vị trí, chiều dài và độ đậm của từng lọn tóc, sợi râu
+   được xê dịch ngẫu nhiên trong biên độ hẹp, lấy từ một hạt giống cố định
+   (`--seed`) nên cùng hạt giống thì cùng một bức tranh, đổi hạt giống thì
+   được một bản chép tay khác.
+
+Ngoài ra:
 
 - **Bản đồ dựng từ toạ độ thật.** Danh sách `DAT_LIEN` ghi các điểm mốc
   trên biên giới và bờ biển theo (kinh độ, vĩ độ), hàm `_diem_ban_do()`
   chiếu thẳng vào ô chứa bản đồ nên dáng chữ S đúng tỉ lệ. Hai quần đảo
   giữ đúng vĩ độ, còn hoành độ được kéo lại gần cho vừa khuôn hình.
-- **Chân dung là hình vàng phẳng, ngũ quan tả bằng nét đỏ**: mảng vàng cho
-  đầu, thân và chòm râu; nét đỏ cho chân tóc, lông mày, mắt, mũi, ria, cổ
-  áo. Mọi nét đều bo tròn hai đầu như nét bút lông.
-- `Tranh.dat_khung()` cho phép co giãn và dời cả nhóm hình, nhờ vậy chân
-  dung được vẽ trong hệ toạ độ riêng rồi đặt vào khuôn tranh.
+- `Tranh.dat_khung()` co giãn và dời cả nhóm hình, nhờ vậy chân dung được
+  vẽ trong hệ toạ độ riêng rồi đặt vào khuôn tranh.
 - Dòng chữ được vẽ ra mặt nạ riêng rồi co giãn vừa ô đã định, nên bố cục
   không đổi dù máy dùng phông chữ nào.
 
